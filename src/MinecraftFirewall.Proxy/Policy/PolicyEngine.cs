@@ -35,6 +35,7 @@ public sealed class PolicyEngine(
             return new PolicyDecision(false, "Status-ping rate limit exceeded.");
         }
 
+        strikeTracker.Reset(remoteAddress);
         return new PolicyDecision(true, "OK");
     }
 
@@ -86,6 +87,10 @@ public sealed class PolicyEngine(
                 profile.Name, remoteAddress, username);
         }
 
+        // A clean, fully-allowed login clears any accumulated strikes for this IP — a legitimate
+        // admin who fumbles their allowlist a few times and then connects correctly must not carry
+        // those near-misses toward an eventual ban.
+        strikeTracker.Reset(remoteAddress);
         return new PolicyDecision(true, "OK");
     }
 

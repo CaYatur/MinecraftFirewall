@@ -24,6 +24,7 @@ builder.Services.AddHttpClient();
 builder.Services.AddSingleton<VpnIntelligence>();
 builder.Services.AddSingleton<ConnectionRateLimiter>();
 builder.Services.AddSingleton<NeverBanList>();
+builder.Services.AddSingleton<IWindowsFirewallGateway, WindowsFirewallGateway>();
 builder.Services.AddSingleton<FirewallBanService>();
 builder.Services.AddSingleton<StrikeTracker>();
 builder.Services.AddSingleton<PolicyEngine>();

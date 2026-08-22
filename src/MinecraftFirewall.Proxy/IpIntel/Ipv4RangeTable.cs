@@ -99,7 +99,10 @@ public sealed class Ipv4RangeTable
             return false;
 
         uint baseValue = ToUInt32(address);
-        uint hostMask = prefixLength == 0 ? uint.MaxValue : uint.MaxValue >> prefixLength;
+        // C#'s >> on a 32-bit operand masks the shift count to 5 bits, so ">> 32" silently behaves
+        // like ">> 0" instead of yielding 0 — a bare /32 entry would otherwise become a match-everything
+        // range. Handle that boundary explicitly rather than relying on the shift.
+        uint hostMask = prefixLength == 32 ? 0u : uint.MaxValue >> prefixLength;
 
         start = baseValue & ~hostMask;
         end = start | hostMask;

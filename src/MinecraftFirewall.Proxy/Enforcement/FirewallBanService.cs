@@ -1,9 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
 using Microsoft.Extensions.Options;
-using WindowsFirewallHelper;
-using WindowsFirewallHelper.Addresses;
-using WindowsFirewallHelper.FirewallRules;
 
 namespace MinecraftFirewall.Proxy.Enforcement;
 
@@ -16,28 +13,41 @@ public enum BanResult
 }
 
 /// <summary>
-/// Machine-wide Windows Firewall bans via the INetFwPolicy2 COM API (wrapped by WindowsFirewallHelper) —
-/// never by shelling out to netsh with interpolated input, since the IP being banned arrives from
-/// untrusted network traffic. A ban applies to every server profile at once, since it blocks the IP
-/// from the machine, not from one port. Never-ban list is checked before every ban.
+/// Ban state, TTL, and never-ban policy — the part of firewall enforcement worth unit testing.
+/// Actual rule mutation is delegated to IWindowsFirewallGateway (see WindowsFirewallGateway for the
+/// real, COM-backed implementation) so tests can inject a fake and never touch the real firewall.
+/// A ban applies to every server profile at once, since it blocks the IP from the machine, not from
+/// one port.
 /// </summary>
 public sealed class FirewallBanService : IDisposable
 {
-    private const string RuleNamePrefix = "MinecraftFirewall-Ban-";
-
     private readonly FirewallBanOptions _options;
     private readonly NeverBanList _neverBanList;
+    private readonly IWindowsFirewallGateway _gateway;
     private readonly ILogger<FirewallBanService> _logger;
     private readonly ConcurrentDictionary<IPAddress, DateTimeOffset> _activeBans = new();
-    private readonly object _firewallLock = new();
     private readonly Timer _cleanupTimer;
 
-    public FirewallBanService(IOptions<FirewallBanOptions> options, NeverBanList neverBanList, ILogger<FirewallBanService> logger)
+    public FirewallBanService(
+        IOptions<FirewallBanOptions> options,
+        NeverBanList neverBanList,
+        IWindowsFirewallGateway gateway,
+        ILogger<FirewallBanService> logger)
     {
         _options = options.Value;
         _neverBanList = neverBanList;
+        _gateway = gateway;
         _logger = logger;
         _cleanupTimer = new Timer(_ => CleanupExpired(), null, _options.CleanupInterval, _options.CleanupInterval);
+
+        if (!_gateway.CanAccessFirewall(out string? probeError))
+        {
+            _logger.LogWarning(
+                "Cannot access the Windows Firewall ({Error}). The service is probably not running with " +
+                "Administrator rights. Bans will still be tracked and enforced in-process, but the OS-level " +
+                "firewall rule that should block the IP machine-wide will not be created until this is fixed.",
+                probeError);
+        }
     }
 
     public bool IsBanned(IPAddress address) => _activeBans.ContainsKey(address);
@@ -60,28 +70,19 @@ public sealed class FirewallBanService : IDisposable
             return BanResult.AlreadyBanned;
         }
 
-        lock (_firewallLock)
+        try
         {
-            try
-            {
-                var rule = new FirewallWASRule(
-                    RuleNameFor(address),
-                    FirewallAction.Block,
-                    FirewallDirection.Inbound,
-                    FirewallProfiles.Domain | FirewallProfiles.Private | FirewallProfiles.Public)
-                {
-                    Protocol = FirewallProtocol.Any,
-                    RemoteAddresses = [new SingleIP(address)],
-                    Description = $"MinecraftFirewall auto-ban: {reason}",
-                };
-
-                FirewallManager.Instance.Rules.Add(rule);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to create a Windows Firewall rule blocking {Ip}.", address);
-                return BanResult.Failed;
-            }
+            _gateway.AddBlockRule(address, reason);
+        }
+        catch (Exception ex)
+        {
+            // OS-level enforcement failed (commonly: not running elevated) — still record the ban
+            // in-process so IsBanned() keeps denying this IP at the proxy layer. A silent no-op here
+            // would mean a "banned" IP sails straight through every subsequent connection attempt.
+            _activeBans[address] = expiresAt;
+            _logger.LogError(ex, "Failed to create a Windows Firewall rule blocking {Ip}; falling back to in-process blocking only " +
+                "(the service may not be running with Administrator rights).", address);
+            return BanResult.Failed;
         }
 
         _activeBans[address] = expiresAt;
@@ -91,12 +92,13 @@ public sealed class FirewallBanService : IDisposable
 
     public void Unban(IPAddress address)
     {
-        lock (_firewallLock)
+        try
         {
-            string name = RuleNameFor(address);
-            var existing = FirewallManager.Instance.Rules.FirstOrDefault(r => r.Name == name);
-            if (existing is not null)
-                FirewallManager.Instance.Rules.Remove(existing);
+            _gateway.RemoveBlockRule(address);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to remove the Windows Firewall rule blocking {Ip}.", address);
         }
 
         if (_activeBans.TryRemove(address, out _))
@@ -115,8 +117,6 @@ public sealed class FirewallBanService : IDisposable
                 Unban(address);
         }
     }
-
-    private static string RuleNameFor(IPAddress address) => $"{RuleNamePrefix}{address}";
 
     public void Dispose() => _cleanupTimer.Dispose();
 }

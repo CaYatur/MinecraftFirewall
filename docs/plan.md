@@ -1,0 +1,138 @@
+# MinecraftFirewall — Windows Reverse-Proxy Firewall for Minecraft Java Edition
+
+## Context
+
+The user runs (or plans to run) one or more Minecraft Java Edition servers, on the same Windows machine, with `online-mode=false` and no protection plugins. In that configuration Minecraft never authenticates usernames against Mojang, so anyone can connect claiming to be an admin/OP name, and bots can mass-probe usernames. The user wants this solved **outside Minecraft** — no plugin/mod — as a standalone Windows application, with real-time blocking of proxy/VPN-based connection attempts.
+
+Requirements gathered across this planning session, in the order they came up:
+1. Java Edition, C#/.NET, free third-party IP intelligence, architecture delegated to me → **reverse proxy**.
+2. Must front **multiple Minecraft servers on the same machine**, each its own port, from one running instance.
+3. Static per-username IP allowlisting isn't enough — the same real player legitimately connects from different IPs. Needed something smarter than IP-matching alone.
+4. If possible, commands executed by players after joining should be observable/audited.
+5. An additional, branded, lightweight subsystem — **"CaYaDev-Check"** — where players can register/log in, get remembered by IP so they aren't re-prompted, alongside everything above.
+6. **The strongest request**: if a player's *first* login under a given username is done from a genuine (premium/Microsoft-licensed) Minecraft account, that username should be permanently theirs — nobody else, cracked or otherwise, should ever be able to use that name again, even though the server itself stays `online-mode=false`.
+
+**Architecture: reverse proxy**, not raw packet-level filtering (WinDivert) — Minecraft's VarInt-length-prefixed TCP stream is far simpler to parse via `NetworkStream` than via reassembled raw IP packets, and this is the architecture real Minecraft firewall/anti-DDoS products use. One Windows process hosts N listeners (one per configured server profile) and shares IP-intel and firewall-ban infrastructure across all of them, so a block on one server applies machine-wide.
+
+**Requirement 6 needed real correction during design, recorded here so it isn't silently re-proposed later:** the first instinct was to auto-probe every *brand-new* username with a Mojang encryption challenge the first time it's ever seen, and lock the name to whoever passes. That's backwards — it means an attacker who connects with a cracked client to an unclaimed name *first* gets the name marked "not premium, offline-eligible" forever, which is the exact attack this feature exists to prevent. The correct version, used below: **premium-required is something the admin declares** (per username, via config or a CLI command), not something discovered by probing traffic. A declared name always gets challenged and a failure is always a denial — no fallback, no race, no one-time hiccup imposed on ordinary cracked players who were never at risk in the first place.
+
+**Compression is the other thing that had to be corrected, and it now gates two separate features.** `online-mode=false` disables encryption (no AES) but does **not** disable packet compression. Once the backend sends `Set Compression` during login (default threshold 256), every later frame becomes `[length][dataLength][zlib payload]` instead of `[length][payload]`. Any code that reads Play-state packets — command auditing *and* the CaYaDev-Check chat-based register/login gate both need this — will silently read garbage the moment compression turns on unless the frame reader accounts for it. This must be verified empirically before either feature is built (see Stage 2).
+
+**Honesty notes to keep visible, not bury:**
+- This is defense-in-depth for a server that must stay `online-mode=false`, not a replacement for Mojang authentication.
+- Premium-lock only protects a name from the moment the admin declares it and the real owner successfully claims it. It cannot retroactively un-claim a name an attacker already grabbed in plain offline mode before that point — same first-come dynamic as Minecraft usernames generally.
+- For a premium-required connection, the *backend* server (still offline-mode) computes its own `OfflinePlayer:<name>` UUID and has no idea the proxy just verified a real Microsoft account — the real UUID does not reach the backend's world data. The proxy's verification is authoritative for *access control*, not for what the backend stores.
+
+## Delivery is staged, not one flat build
+
+The scope above is four substantial subsystems on top of a proxy core, and none of it exists yet. Building it as one undifferentiated pass risks nothing reaching a testable state. Order matters because later stages depend on earlier ones being verified, not just written:
+
+- **Stage 1 — Core proxy.** Multi-server reverse proxy, Handshake/Login-Start parsing, VPN/datacenter IP-intel, per-profile rate limiting, Windows Firewall ban enforcement, never-ban list, structured logging. Fully testable and useful on its own (static IP-allowlist protection + bot/VPN mitigation), before any Play-state work begins.
+- **Stage 2 — Protocol spikes (small, empirical, blocking).** Two things must be verified against a real server/client before Stage 3 is designed further, not assumed: (a) exact compression frame format and how `Set Compression` behaves with a real Paper/vanilla backend at the default threshold; (b) whether a vanilla client tolerates the proxy withholding Play-state traffic while waiting for a chat response, or whether login must instead be rejected outright with a retry-with-CLI message. Both determine the *shape* of Stage 3, so they come first.
+- **Stage 3 — Play-state features.** Command auditing + dangerous-command detection, and the CaYaDev-Check password gate (self-registration and admin-configured names alike), built on whichever frame-reader/holding strategy Stage 2 validated.
+- **Stage 4 — Premium/Mojang verification.** Admin-declared premium-required names: real encryption handshake + `hasJoined` check, login-splice to the backend, UUID pinning. Highest complexity, highest external-dependency risk (Mojang's session API), built last and independently toggleable.
+
+## Stage 1 — Core proxy
+
+1. Each Minecraft server on the box binds only to `127.0.0.1` on its own internal port. One proxy instance binds **one public port per server profile**, config-driven — adding a server later is an `appsettings.json` edit, not a code change.
+2. Proxy parses the Handshake packet (`next_state`, client protocol version — the latter needed by Stage 3/4 for feature gating) and, only if `next_state == 2` (login), the Login Start username. Status/ping (`next_state == 1`) passes through untouched and is separately rate-limited (cheapest DoS surface).
+3. Policy decision combines: identity-store lookup (Stage 1 ships with static IP/CIDR allowlist only — passwords and premium-lock arrive in Stages 3–4 on the *same* store, see below), VPN/datacenter IP flag (severity configurable per profile, default "block only for identity-protected usernames, log-only for everyone else"), and a per-profile-per-IP sliding-window rate limit.
+4. On allow: bytes already read are replayed verbatim to the backend, then the connection becomes a byte pump (Stage 1 has no reason to keep parsing — that starts in Stage 3).
+5. On deny: connection is dropped or sent a disconnect packet before it reaches the real server.
+6. Repeat offenders get a real Windows Firewall block rule via `INetFwPolicy2` COM (never shelling out to `netsh` with interpolated input — usernames arrive from the network), TTL + cleanup, applied **globally across every profile**.
+7. Hardcoded never-ban list (loopback, RFC1918, configured admin allowlist) can never be auto-banned.
+8. IP intelligence: periodically-downloaded plain-CIDR lists, not per-connection API calls. Verified source: **X4BNet/lists_vpn** (MIT licensed, GitHub-Actions-updated) — `output/vpn/ipv4.txt`, `output/datacenter/ipv4.txt`. Downloaded on startup + daily timer, disk-cached, fails open (keeps last good list, logs a warning) on refresh failure. No usable free IPv6 CIDR source exists — IPv6 for identity-protected usernames requires an exact allowlist/learned-IP match; no VPN-flag signal is available for IPv6.
+9. Structured logging (file + console), every line tagged with server profile; optional Discord webhook alerts (config-gated, off by default) for denials, learned-IP events (Stage 3+), and ban escalations.
+
+### The identity store — one store, one gate, built once and extended in place
+
+Every later stage adds *fields* to the same per-username record and *branches* in the same gate function — not a parallel mechanism. Designing it this way from Stage 1 avoids the two-parallel-auth-paths drift that would otherwise happen between "protected admin names" and "self-registered player names."
+
+```
+IdentityEntry {
+  Username
+  StaticAllowlist: [IP/CIDR]        // Stage 1
+  LearnedIps: [{ip, expiresAt}]     // Stage 3 (populated by successful password/passphrase checks)
+  PasswordHash: string?             // Stage 3 (self-registration or admin-set)
+  PremiumRequired: bool             // Stage 4 (admin-declared only, never auto-set)
+  PinnedUuid: Guid?                 // Stage 4 (recorded on first successful premium verification)
+}
+```
+
+Gate precedence, fixed now so it isn't improvised later: **`PremiumRequired` always wins.** If set, the connection must pass the Stage 4 encryption+`hasJoined` challenge (matching `PinnedUuid` once set) — the password/IP-allowlist fields are not consulted at all for that name, so a weaker mechanism can never bypass the strong one. If not set, fall through to IP allowlist / learned IP / password gate as configured. A name with no `IdentityEntry` at all behaves exactly like vanilla offline mode — no gate, immediate join — which is what keeps this "low resource" for the common case, per the user's ask: gating logic only runs for names someone has actually opted into protecting.
+
+**Explicit guarantee for the genuine owner of a `PremiumRequired` name:** the real Microsoft/Mojang account is never shown a CaYaDev-Check password prompt, from any IP, ever — the two paths don't intersect. The moment `PremiumRequired` is set, the password/IP-allowlist fields stop being consulted entirely (see above), so there is no code path left that could ask the real owner for a password. Their own Minecraft launcher answers the cryptographic challenge automatically and silently, from whatever network they happen to be on — nothing to type, nothing to remember. The only two outcomes for a `PremiumRequired` name are: the crypto+`hasJoined` check passes (real account, join proceeds immediately, no prompt) or it fails (anyone else, denied outright, also no prompt — never a fallback into asking for a password instead).
+
+Entries are created three ways: (a) admin config (`ServerProfiles[].ProtectedUsernames`, can set allowlist and/or `PremiumRequired`), (b) self-service `/register <password>` in chat (Stage 3, creates a plain password entry, no admin involvement), (c) an admin CLI command to declare `PremiumRequired` after the fact.
+
+## Stage 2 — Protocol spikes (do before designing Stage 3 further)
+
+- Stand up a real Paper or vanilla backend with default `network-compression-threshold=256`, connect a real client through a minimal proxy, and confirm exactly when `Set Compression` arrives and what the frame format looks like before/after. Build the frame reader to either inflate frames past that point or — if that's not reliable — require `network-compression-threshold=-1` in the README and detect+warn (never silently mis-parse) if compression turns on anyway.
+- Test whether a real vanilla client tolerates the proxy sending Login Success and then withholding/delaying Play-state packets while waiting on a chat response (for the CaYaDev-Check password prompt). If the client times out or misbehaves, the fallback is: reject the login outright with a disconnect message telling the player to `/register` or reconnect after being added via the admin CLI — no attempt to hold the connection open mid-protocol.
+
+Both outcomes get written back into this plan before Stage 3 starts, since they change what Stage 3's inspector actually looks like.
+
+## Stage 3 — Play-state features
+
+- **Frame reader** (`Protocol/FrameReader.cs`): outer VarInt length frame always parsed (cheap, version-stable); payload only decoded for the specific packet IDs being inspected (chat/command, clientbound `Set Compression`, clientbound `Disconnect`); everything else forwarded byte-for-byte, never re-serialized. Compression-aware per Stage 2's findings.
+- **`Protocol/ProtocolVersionRegistry.cs`**: table of MC protocol versions → verified packet IDs, sourced from the protocol reference for the specific versions tested during implementation (never guessed from memory). Unknown client version → Play-state inspection is skipped for that connection (logged once, not per-packet), connection still proxies at the frame level. The fallback on an unrecognized version is always "stop inspecting," never "guess an ID."
+- **Command auditing**: decode chat/command packets, log (profile, username, IP, timestamp). Match against a configurable, normalized dangerous-command list (strip leading `/`, strip `minecraft:`-style namespace, lowercase, basic aliases — documented as heuristic defense-in-depth, not a guarantee). A match always alerts; if the sender isn't identity-verified (passed the gate below or premium-locked), the proxy also disconnects them and fast-tracks firewall-ban escalation.
+- **CaYaDev-Check password gate**, using the Stage 2 result:
+  - Unregistered name → normal join, no gate (matches vanilla behavior; a player can `/register <password>` any time after joining to opt in).
+  - Registered name (password set, no `PremiumRequired`), IP matches static allowlist or a non-expired learned IP → immediate join, no prompt — this is the "same IP doesn't get asked again" behavior the user asked for.
+  - Registered name, unrecognized IP → password challenge via chat (`/login <password>`) using whichever strategy Stage 2 validated (held Play-state traffic, or reject-and-retry). Correct password → join, learn this IP (TTL-capped, e.g. 30 days, max N per username, oldest-expiring evicted first), send an alert ("new IP trusted for `<username>`") so a stolen password shows up as a visible event, not silently. Wrong/timeout → disconnect, fast-track ban escalation (far fewer strikes than the generic rate limiter).
+  - Password-related chat messages (`/register`, `/login`) are intercepted, **never forwarded to the backend**, and redacted at the point of interception in every log/alert sink — never logged in plaintext even transiently.
+- The manual local-only admin CLI (`whitelist-add-me`, etc., over a loopback-only named pipe) remains as an admin override independent of the chat-based gate.
+
+## Stage 4 — Premium/Mojang verification (admin-declared, highest complexity)
+
+- Admin marks a username `PremiumRequired` via config or CLI — never set automatically by observing traffic.
+- On every connection attempt for such a name: proxy sends a real `Encryption Request` (RSA keypair generated at startup, server-id string, verify token), waits for `Encryption Response`, decrypts the shared secret, verifies the token, computes the session hash, and calls Mojang's `hasJoined` session endpoint. Success → identity confirmed; if `PinnedUuid` is unset, record the returned UUID as the permanent pin; if set, the returned UUID must match it. Failure (bad response, timeout, `hasJoined` rejection, or UUID mismatch) → deny, no fallback to offline mode for that name, ever.
+- **This is not a byte-relay anymore for these connections — it's a login splice**, the largest single piece of work in the feature: the proxy terminates the *client's* Login sequence itself (it sent Encryption Request, so it owns Login Success and the UUID in it), and separately opens a fresh, unencrypted, offline-mode login to the backend as a normal client would. From that point, the client side of the connection is AES-CFB8 encrypted (proxy↔client) while the backend side stays plaintext (proxy↔backend) — the proxy is a translating relay between the two, which also means Stage 3's Play-state inspector needs a decrypt/encrypt shim for these specific connections, not just frame reads.
+- State plainly in the README (this is the UUID-mismatch honesty note from above): the backend never learns the real Microsoft UUID; its own player data still keys off its own offline UUID for that name.
+- Feature-flagged independently (`Features.PremiumVerification.Enabled`) so it can be disabled without affecting Stages 1–3 if Mojang's session API changes or causes issues.
+
+## Explicitly out of scope / explicitly rejected
+
+- **Auto-probing new usernames for premium status** — rejected during design, see the correction note above; kept here so it doesn't get silently re-proposed.
+- BungeeCord-style IP forwarding to the backend (v2 candidate once Stage 1's backend-unreachability guarantee is proven in practice).
+- Bedrock Edition / RakNet-UDP support.
+- Full IPv6 VPN/proxy intelligence (no good free source found).
+- Impossible-travel / geo-velocity heuristics — needs an unsourced geo database, noisy on mobile/CGNAT, can only ever produce a log line, and the password/premium gates already cover the case it would flag.
+- A GUI dashboard (service + CLI + log files + optional Discord alerts).
+
+## Project structure (`MinecraftFirewall.sln`)
+
+- **`MinecraftFirewall.Proxy`** (Windows Service, Generic Host, `UseWindowsService()`)
+  - `Program.cs` — host wiring, DI, starts one `ProxyListener` per configured `ServerProfile`
+  - `Protocol/VarInt.cs`, `Protocol/HandshakeReader.cs` — stable, always parsed
+  - `Protocol/FrameReader.cs`, `Protocol/ProtocolVersionRegistry.cs`, `Protocol/PlayStateInspector.cs` — Stage 3
+  - `Identity/IdentityStore.cs` — the single record type and store described above, per profile, reloadable, persisted across restarts
+  - `Identity/IdentityGate.cs` — the one gate function implementing the precedence rule (premium > password/IP > none)
+  - `Identity/PremiumVerifier.cs`, `Identity/LoginSplice.cs`, `Identity/Aes Cfb8Stream.cs` — Stage 4
+  - `ServerProfile.cs` — name, public/backend port, its identity entries, per-profile policy overrides
+  - `ProxyListener.cs`, `ClientConnection.cs` — accept loop and per-connection orchestration; short pre-login read deadline (~2s) against slowloris connections
+  - `Policy/PolicyEngine.cs` — combines identity result, VPN severity, rate limit, never-ban check
+  - `IpIntel/IpRangeTable.cs`, `IpIntel/IpListRefreshService.cs` — shared across all profiles
+  - `RateLimiting/ConnectionRateLimiter.cs` — per-`(profile, IP)`, separate thresholds for ping vs login
+  - `Enforcement/FirewallBanService.cs` — `INetFwPolicy2` COM wrapper, TTL + cleanup, never-ban check, shared/global, exposes a fast-track (fewer strikes) path for password/dangerous-command triggers
+  - `Admin/AdminPipeServer.cs` — loopback-only named pipe for the CLI
+  - `Logging/`, `Alerts/DiscordAlertSender.cs`
+  - `appsettings.json` — `ServerProfiles[]`, VPN/rate-limit defaults, ban TTL/fast-track strikes, dangerous-command list, IP list source URLs, fail-open toggle, Discord webhook, `Features.PremiumVerification.Enabled`
+- **`MinecraftFirewall.Admin`** — CLI (`whitelist-add-me`, `require-premium <profile> <username>`, `list-bans`, `unban`, `reload`, `list-profiles`)
+- **`MinecraftFirewall.Tests`** — xUnit, organized by stage:
+  - Stage 1: VarInt/Handshake parsing, IP range lookup, policy-engine decision table, rate limiter window, never-ban list, two-profile isolation + shared ban integration test
+  - Stage 3: frame reader compressed/uncompressed/threshold-boundary cases, dangerous-command normalization, identity-gate precedence table (unregistered→open, registered+known-IP→open, registered+unknown-IP+correct→learn+alert, wrong→deny+fast-track), password/passphrase redaction (assert the raw secret never appears in any log sink)
+  - Stage 4: premium-gate precedence over password/IP, UUID pin mismatch → deny, `hasJoined` failure → deny with no offline fallback
+
+## Manual steps that stay with the user (not auto-executed by me)
+
+- Editing `server.properties` per server (`server-ip=127.0.0.1`, internal port, `network-compression-threshold` decision per Stage 2's findings)
+- Per-server verification: no inbound Windows Firewall rule for the backend port, no router port-forward, confirmed failure connecting to the backend port from a non-loopback address
+- Installing the compiled app as a Windows Service and granting it firewall-modification rights
+- Live Windows Firewall rule creation happens only when the running service (under the user's control) decides to ban an IP — not something I execute during this build/planning session
+
+## Verification plan
+
+- `dotnet build` / `dotnet test` after each stage — every automated test above runs without a real Minecraft server, admin rights, or touching the real Windows Firewall
+- Manual end-to-end, staged: Stage 1 first against one real server (normal login, protected-name-from-wrong-IP denial, VPN-flagged IP denial, status ping still works), then a second profile/server to confirm isolation + shared bans. Stage 3 adds command logging/dangerous-command and the register/login chat flow against the compression settings Stage 2 determined. Stage 4 adds a real premium account connecting to a `PremiumRequired` name, and a cracked-client attempt against the same name confirmed denied.

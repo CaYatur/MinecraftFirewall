@@ -107,7 +107,7 @@ public static class ClientConnection
         {
             logger.LogInformation("[{Profile}] login denied for '{Username}' from {Ip}: {Reason}",
                 profile.Name, username, remoteAddress, decision.Reason);
-            await TrySendDisconnectAsync(clientStream, "This connection was blocked by MinecraftFirewall.", hostShutdown).ConfigureAwait(false);
+            await TrySendDisconnectAsync(client, clientStream, "This connection was blocked by MinecraftFirewall.", hostShutdown).ConfigureAwait(false);
             return;
         }
 
@@ -144,12 +144,20 @@ public static class ClientConnection
         }
     }
 
-    private static async Task TrySendDisconnectAsync(NetworkStream clientStream, string reason, CancellationToken ct)
+    private static async Task TrySendDisconnectAsync(TcpClient client, NetworkStream clientStream, string reason, CancellationToken ct)
     {
         try
         {
             byte[] packet = LoginDisconnect.BuildPacket(reason);
             await clientStream.WriteAsync(packet, ct).ConfigureAwait(false);
+            await clientStream.FlushAsync(ct).ConfigureAwait(false);
+
+            // A hard Dispose() right after writing can RST the connection before the client reads
+            // the kick message — especially if the client has unread bytes still queued. Half-close
+            // our send side and give the client a brief grace period to read the packet before the
+            // caller's `using` disposes the socket.
+            client.Client.Shutdown(SocketShutdown.Send);
+            await Task.Delay(TimeSpan.FromMilliseconds(250), CancellationToken.None).ConfigureAwait(false);
         }
         catch
         {
