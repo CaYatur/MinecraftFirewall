@@ -21,3 +21,8 @@ Thumbs.db
 appsettings.*.local.json
 *.pfx
 *.pem
+
+## Local Stage 2 spike test server — the jar, world save, logs, and full generated reports are
+## large/regeneratable local artifacts, not source. Only the small packets-*.json excerpt this
+## project actually sourced IDs from is committed, under docs/protocol/.
+test-server/

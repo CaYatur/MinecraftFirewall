@@ -7,7 +7,12 @@ using Microsoft.Extensions.Options;
 
 namespace MinecraftFirewall.Proxy.Policy;
 
-public sealed record PolicyDecision(bool Allow, string Reason);
+/// <summary>Carried on an Allow decision when the connection is a self-registered CaYaDev-Check
+/// username on an unrecognized IP — the caller (ClientConnection/PlayStateInspector) must enforce
+/// that the first Play-state message is a correct /login, per IdentityGate's AllowPendingGraceAuthentication.</summary>
+public sealed record GraceAuthRequirement(IdentityEntry Entry, string PasswordHash);
+
+public sealed record PolicyDecision(bool Allow, string Reason, GraceAuthRequirement? GraceAuth = null);
 
 /// <summary>
 /// Combines identity, VPN/datacenter signal, and rate limiting into one Allow/Deny decision per
@@ -66,7 +71,9 @@ public sealed class PolicyEngine(
 
         if (isVpnFlagged)
         {
-            bool isProtectedUsername = identityDecision.Outcome == IdentityOutcome.Allow;
+            // A pending-grace-auth connection is a security-relevant identity too (it has a password),
+            // so it's treated the same as an outright-Allow for VPN policy purposes.
+            bool isProtectedUsername = identityDecision.Outcome is IdentityOutcome.Allow or IdentityOutcome.AllowPendingGraceAuthentication;
 
             bool shouldBlock = profile.VpnPolicy switch
             {
@@ -89,14 +96,43 @@ public sealed class PolicyEngine(
 
         // A clean, fully-allowed login clears any accumulated strikes for this IP — a legitimate
         // admin who fumbles their allowlist a few times and then connects correctly must not carry
-        // those near-misses toward an eventual ban.
+        // those near-misses toward an eventual ban. A pending grace-auth isn't "clean" yet (the
+        // password hasn't been checked), so strikes are only cleared once that succeeds — see
+        // ClientConnection/PlayStateInspector, which calls RegisterGraceAuthSuccess itself.
+        if (identityDecision.Outcome == IdentityOutcome.AllowPendingGraceAuthentication)
+        {
+            return new PolicyDecision(true, identityDecision.Reason, new GraceAuthRequirement(entry!, entry!.PasswordHash!));
+        }
+
         strikeTracker.Reset(remoteAddress);
         return new PolicyDecision(true, "OK");
     }
 
-    private void RegisterStrikeAndMaybeBan(IPAddress address, string reason)
+    /// <summary>Called by PlayStateInspector when a grace-authentication first-message check succeeds.</summary>
+    public void RegisterGraceAuthSuccess(IPAddress remoteAddress) => strikeTracker.Reset(remoteAddress);
+
+    /// <summary>Called by PlayStateInspector when a grace-authentication check fails (wrong password,
+    /// wrong first message, or timeout) — a much stronger signal than a generic rate-limit trip, so it
+    /// weighs enough strikes to reach the ban threshold immediately rather than needing repeats.</summary>
+    public void RegisterGraceAuthFailure(IPAddress remoteAddress, string profileName, string username)
     {
-        int strikes = strikeTracker.RegisterStrike(address);
+        RegisterStrikeAndMaybeBan(remoteAddress,
+            $"[{profileName}] grace-authentication failed for registered username '{username}'",
+            weight: _banOptions.StrikesBeforeBan);
+    }
+
+    /// <summary>Called by PlayStateInspector when a non-trusted connection issues a dangerous command —
+    /// same fast-track reasoning as a grace-authentication failure.</summary>
+    public void RegisterDangerousCommand(IPAddress remoteAddress, string profileName, string username, string command)
+    {
+        RegisterStrikeAndMaybeBan(remoteAddress,
+            $"[{profileName}] dangerous command '{command}' from non-trusted username '{username}'",
+            weight: _banOptions.StrikesBeforeBan);
+    }
+
+    private void RegisterStrikeAndMaybeBan(IPAddress address, string reason, int weight = 1)
+    {
+        int strikes = strikeTracker.RegisterStrike(address, weight);
         if (strikes >= _banOptions.StrikesBeforeBan)
         {
             banService.Ban(address, $"{reason} (strike {strikes}/{_banOptions.StrikesBeforeBan})");

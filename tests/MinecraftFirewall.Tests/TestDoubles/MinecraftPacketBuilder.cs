@@ -26,9 +26,19 @@ public static class MinecraftPacketBuilder
         return WrapFrame(payload);
     }
 
+    /// <summary>Builds an uncompressed (dataLength=0) compressed-phase frame carrying a single String
+    /// field — the shape of Play chat/chat_command/chat_command_signed as far as this project reads them.</summary>
+    public static byte[] BuildCompressedStringPacketFrame(int packetId, string text) =>
+        MinecraftFirewall.Proxy.Protocol.FrameWriter.WriteCompressedFrameUncompressedPayload(packetId, EncodeString(text));
+
+    /// <summary>Builds an uncompressed (dataLength=0) compressed-phase frame with no fields — the
+    /// shape of Configuration's (Acknowledge) Finish Configuration.</summary>
+    public static byte[] BuildCompressedEmptyPacketFrame(int packetId) =>
+        MinecraftFirewall.Proxy.Protocol.FrameWriter.WriteCompressedFrameUncompressedPayload(packetId, []);
+
     private static byte[] WrapFrame(byte[] payload) => [.. VarInt.Encode(payload.Length), .. payload];
 
-    private static byte[] EncodeString(string text)
+    public static byte[] EncodeString(string text)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(text);
         return [.. VarInt.Encode(bytes.Length), .. bytes];

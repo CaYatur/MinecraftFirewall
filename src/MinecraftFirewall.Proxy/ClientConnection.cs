@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.Policy;
 using MinecraftFirewall.Proxy.Protocol;
 
@@ -8,16 +9,25 @@ namespace MinecraftFirewall.Proxy;
 /// <summary>
 /// Per-connection orchestration: read Handshake (+ Login Start if applicable) under a short
 /// pre-login deadline, ask the PolicyEngine for a decision, then either deny (with a proper Login
-/// Disconnect packet when possible) or forward the bytes already read verbatim and become a byte
-/// pump for the rest of the connection. Stage 1 never inspects anything past this point — Play-state
-/// inspection is Stage 3.
+/// Disconnect packet when possible) or forward the bytes already read verbatim. From there: if the
+/// client's protocol version is one Stage 3 has verified packet IDs for (ProtocolVersionRegistry),
+/// the client-to-backend direction runs through PlayStateInspector (command auditing, CaYaDev-Check);
+/// otherwise it's a plain byte pump exactly like Stage 1, since inspecting an unverified version's
+/// packets would mean guessing IDs — never done here.
 /// </summary>
 public static class ClientConnection
 {
     private static readonly TimeSpan PreLoginTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan BackendConnectTimeout = TimeSpan.FromSeconds(5);
 
-    public static async Task HandleAsync(TcpClient client, ServerProfile profile, PolicyEngine policyEngine, ILogger logger, CancellationToken hostShutdown)
+    public static async Task HandleAsync(
+        TcpClient client,
+        ServerProfile profile,
+        PolicyEngine policyEngine,
+        IdentityOptions identityOptions,
+        IReadOnlyCollection<string> dangerousCommands,
+        ILogger logger,
+        CancellationToken hostShutdown)
     {
         using var _ = client;
         client.NoDelay = true;
@@ -58,7 +68,8 @@ public static class ClientConnection
             return;
         }
 
-        await HandleLoginAsync(client, clientStream, handshakeFrame, profile, remoteAddress, policyEngine, logger, preLoginCts, hostShutdown).ConfigureAwait(false);
+        await HandleLoginAsync(client, clientStream, handshakeFrame, handshake, profile, remoteAddress,
+            policyEngine, identityOptions, dangerousCommands, logger, preLoginCts, hostShutdown).ConfigureAwait(false);
     }
 
     private static async Task HandleStatusAsync(TcpClient client, NetworkStream clientStream, Frame handshakeFrame,
@@ -80,9 +91,9 @@ public static class ClientConnection
         await PumpBothWaysAsync(clientStream, backendStream, hostShutdown).ConfigureAwait(false);
     }
 
-    private static async Task HandleLoginAsync(TcpClient client, NetworkStream clientStream, Frame handshakeFrame,
-        ServerProfile profile, IPAddress remoteAddress, PolicyEngine policyEngine, ILogger logger,
-        CancellationTokenSource preLoginCts, CancellationToken hostShutdown)
+    private static async Task HandleLoginAsync(TcpClient client, NetworkStream clientStream, Frame handshakeFrame, HandshakeInfo handshake,
+        ServerProfile profile, IPAddress remoteAddress, PolicyEngine policyEngine, IdentityOptions identityOptions,
+        IReadOnlyCollection<string> dangerousCommands, ILogger logger, CancellationTokenSource preLoginCts, CancellationToken hostShutdown)
     {
         Frame loginStartFrame;
         string username;
@@ -111,6 +122,20 @@ public static class ClientConnection
             return;
         }
 
+        bool hasPacketIds = ProtocolVersionRegistry.TryGet(handshake.ProtocolVersion, out var packetIds);
+
+        if (decision.GraceAuth is not null && !hasPacketIds)
+        {
+            // Can't safely fulfil "must /login as the first message" without decoding Play-state chat
+            // packets for this protocol version — fail closed rather than let an unverified guess
+            // stand in for a security check on a registered username.
+            logger.LogWarning("[{Profile}] '{Username}' requires grace-authentication but protocol version {Version} has no verified packet table — denying.",
+                profile.Name, username, handshake.ProtocolVersion);
+            await TrySendDisconnectAsync(client, clientStream,
+                "Bu istemci sürümü desteklenmiyor. Sunucu yöneticisine başvurun.", hostShutdown).ConfigureAwait(false);
+            return;
+        }
+
         var (backendClient, backendStream) = await TryConnectBackendAsync(profile, logger, hostShutdown).ConfigureAwait(false);
         if (backendClient is null || backendStream is null)
             return;
@@ -120,7 +145,20 @@ public static class ClientConnection
 
         await backendStream.WriteAsync(handshakeFrame.Raw, hostShutdown).ConfigureAwait(false);
         await backendStream.WriteAsync(loginStartFrame.Raw, hostShutdown).ConfigureAwait(false);
-        await PumpBothWaysAsync(clientStream, backendStream, hostShutdown).ConfigureAwait(false);
+
+        if (hasPacketIds)
+        {
+            var inspector = new PlayStateInspector(
+                profile, username, remoteAddress, packetIds, decision.GraceAuth,
+                startsTrusted: decision.GraceAuth is null,
+                identityOptions, dangerousCommands, policyEngine, logger);
+
+            await PumpWithInspectionAsync(client, clientStream, backendStream, inspector, packetIds, hostShutdown).ConfigureAwait(false);
+        }
+        else
+        {
+            await PumpBothWaysAsync(clientStream, backendStream, hostShutdown).ConfigureAwait(false);
+        }
     }
 
     private static async Task<(TcpClient? Client, NetworkStream? Stream)> TryConnectBackendAsync(
@@ -165,6 +203,22 @@ public static class ClientConnection
         }
     }
 
+    private static async Task TrySendPlayDisconnectAsync(TcpClient client, NetworkStream clientStream, int playDisconnectPacketId, string reason, CancellationToken ct)
+    {
+        try
+        {
+            byte[] packet = FrameWriter.WriteCompressedFrameUncompressedPayload(playDisconnectPacketId, NbtTextComponent.BuildLiteral(reason));
+            await clientStream.WriteAsync(packet, ct).ConfigureAwait(false);
+            await clientStream.FlushAsync(ct).ConfigureAwait(false);
+            client.Client.Shutdown(SocketShutdown.Send);
+            await Task.Delay(TimeSpan.FromMilliseconds(250), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort only — the connection is being closed either way.
+        }
+    }
+
     private static async Task PumpBothWaysAsync(NetworkStream clientStream, NetworkStream backendStream, CancellationToken hostShutdown)
     {
         using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(hostShutdown);
@@ -182,6 +236,49 @@ public static class ClientConnection
         catch
         {
             // Expected once one side closes and the other's copy is cancelled/faults.
+        }
+    }
+
+    private static async Task PumpWithInspectionAsync(TcpClient client, NetworkStream clientStream, NetworkStream backendStream,
+        PlayStateInspector inspector, PlayStatePacketIds packetIds, CancellationToken hostShutdown)
+    {
+        using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(hostShutdown);
+
+        Task backendToClient = PumpAsync(backendStream, clientStream, pumpCts);
+        Task clientToBackend = RunInspectorAsync(inspector, clientStream, backendStream, pumpCts);
+
+        await Task.WhenAny(clientToBackend, backendToClient).ConfigureAwait(false);
+        pumpCts.Cancel();
+
+        try
+        {
+            await Task.WhenAll(clientToBackend, backendToClient).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Expected once one side closes and the other's copy is cancelled/faults.
+        }
+
+        if (inspector.DisconnectReason is not null)
+        {
+            await TrySendPlayDisconnectAsync(client, clientStream, packetIds.PlayDisconnectClientbound, inspector.DisconnectReason, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static async Task RunInspectorAsync(PlayStateInspector inspector, NetworkStream clientStream, NetworkStream backendStream, CancellationTokenSource pumpCts)
+    {
+        try
+        {
+            await inspector.RunAsync(clientStream, backendStream, pumpCts.Token).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Any failure here just means this half of the relay is done; the caller tears down both.
+        }
+        finally
+        {
+            pumpCts.Cancel();
         }
     }
 

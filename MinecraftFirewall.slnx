@@ -6,4 +6,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/MinecraftFirewall.Tests/MinecraftFirewall.Tests.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/MinecraftFirewall.ProtocolSpike/MinecraftFirewall.ProtocolSpike.csproj" />
+  </Folder>
 </Solution>

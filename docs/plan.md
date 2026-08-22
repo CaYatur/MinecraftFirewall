@@ -1,5 +1,37 @@
 # MinecraftFirewall — Windows Reverse-Proxy Firewall for Minecraft Java Edition
 
+## Status (as of this writing)
+
+- **Stage 1 — done.** Multi-server reverse proxy, static IP-allowlist identity gate, X4BNet VPN/datacenter
+  IP intelligence, per-profile rate limiting, real Windows Firewall bans (`INetFwPolicy2`, with an
+  in-process fallback + startup elevation probe), never-ban list.
+- **Stage 2 — done.** Compression frame format confirmed empirically against a real Paper 1.21.11
+  server (see the Stage 2 section below); packet IDs sourced from Mojang's own generated data report,
+  not a wiki. The "hold Play-state traffic" question was decided *not* to be pursued without a real
+  graphical client to test against — see the Stage 3 section for the fallback design that resulted.
+- **Stage 3 — done, 130 automated tests passing (`dotnet test`).** Compression-aware frame reading,
+  `ProtocolVersionRegistry` (protocol 774 populated), `PlayStateInspector` (command auditing +
+  dangerous-command detection + fast-track bans), the CaYaDev-Check self-service `/register`/`/login`
+  gate with grace-authentication, PBKDF2 password hashing, TTL/cap-bounded learned IPs. **Not yet done:**
+  a live end-to-end run of the actual compiled `MinecraftFirewall.Proxy` service (as opposed to unit/
+  integration tests with synthetic packets) against the real local Paper test server — this is the
+  natural next verification step, see "Next session" below.
+- **Stage 4 — not started.** Premium/Mojang verification (admin-declared `PremiumRequired`, real
+  encryption handshake + `hasJoined`, login-splice, UUID pinning). This is the feature behind the
+  user's strongest original request (a genuine account permanently owning a username) and hasn't been
+  built yet.
+- **Admin CLI / named pipe — not started.** `whitelist-add-me`, `list-bans`, `unban`, `require-premium`,
+  `reload` all still need the loopback pipe server + `MinecraftFirewall.Admin` console client.
+
+**Next session should start with:** a real end-to-end run — start a local Paper server (a fresh one can
+be re-downloaded via the PaperMC Fill API; the previous one lived at `test-server/`, gitignored, and was
+stopped/not preserved), point a `ServerProfiles` entry in `appsettings.json` at it, run
+`dotnet run --project src/MinecraftFirewall.Proxy`, and connect a real Minecraft client (or extend
+`tools/MinecraftFirewall.ProtocolSpike` to connect *through* the proxy's public port instead of directly
+to the backend) to confirm the full pipeline — not just synthetic-packet unit tests — actually works:
+normal login, a protected-username denial, a `/register` + reconnect-from-new-IP grace-auth flow, and a
+dangerous command triggering a kick. Then proceed to Stage 4.
+
 ## Context
 
 The user runs (or plans to run) one or more Minecraft Java Edition servers, on the same Windows machine, with `online-mode=false` and no protection plugins. In that configuration Minecraft never authenticates usernames against Mojang, so anyone can connect claiming to be an admin/OP name, and bots can mass-probe usernames. The user wants this solved **outside Minecraft** — no plugin/mod — as a standalone Windows application, with real-time blocking of proxy/VPN-based connection attempts.
@@ -65,12 +97,38 @@ Gate precedence, fixed now so it isn't improvised later: **`PremiumRequired` alw
 
 Entries are created three ways: (a) admin config (`ServerProfiles[].ProtectedUsernames`, can set allowlist and/or `PremiumRequired`), (b) self-service `/register <password>` in chat (Stage 3, creates a plain password entry, no admin involvement), (c) an admin CLI command to declare `PremiumRequired` after the fact.
 
-## Stage 2 — Protocol spikes (do before designing Stage 3 further)
+## Stage 2 — Protocol spikes (done)
 
-- Stand up a real Paper or vanilla backend with default `network-compression-threshold=256`, connect a real client through a minimal proxy, and confirm exactly when `Set Compression` arrives and what the frame format looks like before/after. Build the frame reader to either inflate frames past that point or — if that's not reliable — require `network-compression-threshold=-1` in the README and detect+warn (never silently mis-parse) if compression turns on anyway.
-- Test whether a real vanilla client tolerates the proxy sending Login Success and then withholding/delaying Play-state packets while waiting on a chat response (for the CaYaDev-Check password prompt). If the client times out or misbehaves, the fallback is: reject the login outright with a disconnect message telling the player to `/register` or reconnect after being added via the admin CLI — no attempt to hold the connection open mid-protocol.
+**Compression, fully confirmed empirically.** A real local Paper 1.21.11 server (protocol 774, default
+`network-compression-threshold=256`, `online-mode=false`) was stood up and driven with a hand-built
+client (`tools/MinecraftFirewall.ProtocolSpike`) all the way from Handshake through Login →
+Configuration → Play, over a real socket. Result: exactly the frame format Stage 1 assumed —
+`[frameLength][dataLength][payload]` post-compression, `dataLength=0` meaning "sent uncompressed,"
+`dataLength>0` meaning the rest is zlib/deflate compressed to that length. Confirmed over 3,370 real
+frames (full world join, chunk data, registries, keep-alives) with zero parse errors. `Set Compression`
+is packet `0x03` (Login, clientbound), threshold value follows as a single VarInt — also exactly as
+assumed.
 
-Both outcomes get written back into this plan before Stage 3 starts, since they change what Stage 3's inspector actually looks like.
+Packet IDs were **not** taken from a wiki — they were pulled straight from Mojang's own data generator
+(`java -jar paper.jar --reports` → `generated/reports/packets.json`, copied into
+`docs/protocol/packets-774.json`) run against the exact server build tested, and cross-checked against
+every packet actually observed on the wire during the live spike. Both sources agreed on every ID. This
+also caught a real version-drift case: a wiki page for protocol 776 (two versions newer) listed
+different Play-state serverbound chat/command IDs than protocol 774 actually uses — see
+`docs/protocol/README.md` for the specifics. This is the concrete justification for why
+`ProtocolVersionRegistry` (Stage 3) hardcodes IDs per-version from generated reports, never by
+extrapolating from a nearby version.
+
+**Held Play-state traffic ("does the client tolerate a delayed join"), not independently verified —
+defaulting to the documented safe fallback.** This question is about a real graphical Minecraft client's
+tolerance, not server wire behavior, and no such client was available to test against in this
+environment (the spike client is a headless protocol driver, not the real game). Per the plan's own
+fallback design, **Stage 3's CaYaDev-Check gate uses the reject-and-retry strategy unconditionally**: an
+unrecognized IP for a registered name gets denied outright with a disconnect message pointing at
+`/register`/`/login` on retry or the admin CLI — the connection is never held open mid-protocol waiting
+for a chat response. This is simpler to build and correctness-verify than the holding approach, and
+carries no unverified assumption about client behavior. If real-client testing later shows holding is
+tolerated, it can be added as an opt-in enhancement — it is not required for the gate to work.
 
 ## Stage 3 — Play-state features
 

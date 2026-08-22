@@ -13,7 +13,11 @@ public sealed class StrikeTracker
 {
     private readonly ConcurrentDictionary<IPAddress, int> _strikes = new();
 
-    public int RegisterStrike(IPAddress address) => _strikes.AddOrUpdate(address, 1, (_, count) => count + 1);
+    /// <summary>Registers one violation and returns the running total. A higher <paramref name="weight"/>
+    /// is how Stage 3/4 triggers (grace-authentication failure, a dangerous command) fast-track a ban —
+    /// they add more than 1 toward the same threshold, rather than needing a separate counter.</summary>
+    public int RegisterStrike(IPAddress address, int weight = 1) =>
+        _strikes.AddOrUpdate(address, weight, (_, count) => count + weight);
 
     public void Reset(IPAddress address) => _strikes.TryRemove(address, out _);
 }

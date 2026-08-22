@@ -4,15 +4,22 @@ Windows reverse-proxy firewall for Minecraft Java Edition servers running `onlin
 protection plugins. It sits in front of the real server (which binds to `127.0.0.1` only) and decides,
 per connection, whether to forward it — without any plugin/mod inside Minecraft itself.
 
-## Status: Stage 1 of 4
+## Status: Stage 3 of 4 (130 automated tests passing)
 
-This is an early, in-progress build. See [`docs/plan.md`](docs/plan.md) for the complete staged design
-doc. What's implemented right now:
+This is an in-progress build. See [`docs/plan.md`](docs/plan.md) for the complete staged design doc and
+current status. What's implemented right now:
 
 - **Multi-server reverse proxy** — one process fronts multiple Minecraft servers on the same machine,
   each with its own public port, config-driven (`ServerProfiles` in `appsettings.json`).
-- **Protected usernames** — a static IP/CIDR allowlist per username, per server profile. A username with
-  no allowlist behaves exactly like vanilla offline mode.
+- **Protected usernames** — a static IP/CIDR allowlist per username, per server profile, for
+  admin-declared names (strict: unrecognized IP is a hard deny, no exceptions).
+- **CaYaDev-Check** — self-service `/register <password>` / `/login <password>` for any player, PBKDF2
+  hashed, with TTL/cap-bounded IP learning so a returning player from a known IP isn't re-prompted. An
+  unrecognized IP gets one grace-authentication attempt (first Play-state message must be a correct
+  `/login`) before being kicked and fast-tracked toward a ban.
+- **Command auditing** — Play-state chat/command packets are decoded (packet IDs sourced from Mojang's
+  own generated data report for the exact tested version, never guessed), logged, and checked against a
+  configurable dangerous-command list; a match from a non-trusted identity kicks and fast-track bans.
 - **VPN/datacenter IP detection** — free, MIT-licensed CIDR lists from
   [X4BNet/lists_vpn](https://github.com/X4BNet/lists_vpn), refreshed daily, cached to disk, fails open
   if the source is unreachable.
@@ -21,10 +28,12 @@ doc. What's implemented right now:
   `INetFwPolicy2` COM API (never `netsh` with interpolated input), with a TTL, a hardcoded never-ban list
   (loopback/RFC1918/admin allowlist), and an in-process fallback if the service isn't running elevated.
 
-**Not implemented yet** (later stages): Play-state command auditing, the chat-based
-register/login ("CaYaDev-Check") gate, and admin-declared premium (real Mojang account) verification that
-permanently locks a username to its genuine owner. Static IP allowlisting is the only identity mechanism
-right now — the plan's whole point is that this is *not* the final word on "smarter than IP."
+**Not implemented yet:** admin-declared premium (real Mojang account) verification that permanently
+locks a username to its genuine owner (Stage 4 — the feature behind the strongest original request), and
+the admin CLI/named pipe (`whitelist-add-me`, `list-bans`, `unban`, `require-premium`). Also still
+outstanding: a live end-to-end run of the compiled service against a real Minecraft client, as opposed
+to the unit/integration tests (which use synthetic but protocol-verified packets) — see `docs/plan.md`
+for exactly what to run next.
 
 ## Honesty notes
 
@@ -40,9 +49,12 @@ right now — the plan's whole point is that this is *not* the final word on "sm
 ## Project layout
 
 ```
-src/MinecraftFirewall.Proxy/   Windows Service — the proxy itself
-src/MinecraftFirewall.Admin/   Companion CLI (not yet implemented beyond scaffold)
-tests/MinecraftFirewall.Tests/ xUnit tests — no real Minecraft server, no admin rights, no real firewall touched
+src/MinecraftFirewall.Proxy/       Windows Service — the proxy itself
+src/MinecraftFirewall.Admin/       Companion CLI (not yet implemented beyond scaffold)
+tests/MinecraftFirewall.Tests/     xUnit tests — no real Minecraft server, no admin rights, no real firewall touched
+tools/MinecraftFirewall.ProtocolSpike/  Manual diagnostic client used to empirically verify wire behavior
+                                         against a real server (see docs/plan.md Stage 2, docs/protocol/)
+docs/protocol/                     Sourced packet-ID reference data (Mojang's own generated report)
 ```
 
 ## Setup

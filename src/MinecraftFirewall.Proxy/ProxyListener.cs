@@ -1,11 +1,17 @@
 using System.Net;
 using System.Net.Sockets;
+using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.Policy;
 
 namespace MinecraftFirewall.Proxy;
 
 /// <summary>One accept loop bound to a single server profile's public port.</summary>
-public sealed class ProxyListener(ServerProfile profile, PolicyEngine policyEngine, ILogger logger)
+public sealed class ProxyListener(
+    ServerProfile profile,
+    PolicyEngine policyEngine,
+    IdentityOptions identityOptions,
+    IReadOnlyCollection<string> dangerousCommands,
+    ILogger logger)
 {
     public async Task RunAsync(CancellationToken ct)
     {
@@ -41,7 +47,7 @@ public sealed class ProxyListener(ServerProfile profile, PolicyEngine policyEngi
     {
         try
         {
-            await ClientConnection.HandleAsync(client, profile, policyEngine, logger, ct).ConfigureAwait(false);
+            await ClientConnection.HandleAsync(client, profile, policyEngine, identityOptions, dangerousCommands, logger, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

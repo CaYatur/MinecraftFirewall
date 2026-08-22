@@ -61,9 +61,12 @@ public class ProxyIntegrationTests : IAsyncLifetime
 
         _policyEngine = new PolicyEngine(vpnIntel, rateLimiter, _banService, strikeTracker, banOptions, NullLogger<PolicyEngine>.Instance);
 
+        var identityOptions = new IdentityOptions();
+        var dangerousCommands = new DangerousCommandOptions().Commands;
+
         _listenersCts = new CancellationTokenSource();
-        var listenerA = new ProxyListener(_profileA, _policyEngine, NullLogger.Instance);
-        var listenerB = new ProxyListener(_profileB, _policyEngine, NullLogger.Instance);
+        var listenerA = new ProxyListener(_profileA, _policyEngine, identityOptions, dangerousCommands, NullLogger.Instance);
+        var listenerB = new ProxyListener(_profileB, _policyEngine, identityOptions, dangerousCommands, NullLogger.Instance);
         _ = listenerA.RunAsync(_listenersCts.Token);
         _ = listenerB.RunAsync(_listenersCts.Token);
 

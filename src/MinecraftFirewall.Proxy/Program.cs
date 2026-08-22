@@ -1,5 +1,6 @@
 using MinecraftFirewall.Proxy;
 using MinecraftFirewall.Proxy.Enforcement;
+using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.IpIntel;
 using MinecraftFirewall.Proxy.Policy;
 using MinecraftFirewall.Proxy.RateLimiting;
@@ -18,6 +19,8 @@ builder.Services.Configure<VpnIntelOptions>(builder.Configuration.GetSection(Vpn
 builder.Services.Configure<RateLimitOptions>(builder.Configuration.GetSection(RateLimitOptions.SectionName));
 builder.Services.Configure<FirewallBanOptions>(builder.Configuration.GetSection(FirewallBanOptions.SectionName));
 builder.Services.Configure<NeverBanOptions>(builder.Configuration.GetSection(NeverBanOptions.SectionName));
+builder.Services.Configure<IdentityOptions>(builder.Configuration.GetSection(IdentityOptions.SectionName));
+builder.Services.Configure<DangerousCommandOptions>(builder.Configuration.GetSection(DangerousCommandOptions.SectionName));
 
 builder.Services.AddHttpClient();
 

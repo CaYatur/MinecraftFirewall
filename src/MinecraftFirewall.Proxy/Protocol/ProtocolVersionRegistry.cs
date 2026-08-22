@@ -1,0 +1,36 @@
+namespace MinecraftFirewall.Proxy.Protocol;
+
+/// <summary>Packet IDs a specific protocol version needs for Play-state inspection. Configuration's
+/// Finish Configuration (serverbound) is included too — it's the client's Play-state entry marker.</summary>
+public sealed record PlayStatePacketIds(
+    int ConfigurationFinishConfigurationServerbound,
+    int PlayChatServerbound,
+    int PlayChatCommandServerbound,
+    int PlayChatCommandSignedServerbound,
+    int PlayDisconnectClientbound);
+
+/// <summary>
+/// Maps a client's declared protocol version to the packet IDs Stage 3 needs to inspect. Every entry
+/// here must be sourced from Mojang's own generated data report for that exact version
+/// (`java -jar server.jar --reports` → generated/reports/packets.json — see docs/protocol/README.md),
+/// never extrapolated from a nearby version: protocol 774 and 776 (two releases apart) already
+/// disagreed on these exact IDs during this project's own verification. An unrecognized version means
+/// "stop inspecting, keep proxying at the frame level" — never a best-guess fallback.
+/// </summary>
+public static class ProtocolVersionRegistry
+{
+    private static readonly Dictionary<int, PlayStatePacketIds> Versions = new()
+    {
+        // Protocol 774 = Minecraft 1.21.11 (Paper build 1.21.11-57). Sourced from
+        // docs/protocol/packets-774.json and cross-verified live via tools/MinecraftFirewall.ProtocolSpike.
+        [774] = new PlayStatePacketIds(
+            ConfigurationFinishConfigurationServerbound: 0x03,
+            PlayChatServerbound: 0x08,
+            PlayChatCommandServerbound: 0x06,
+            PlayChatCommandSignedServerbound: 0x07,
+            PlayDisconnectClientbound: 0x20),
+    };
+
+    public static bool TryGet(int protocolVersion, out PlayStatePacketIds ids) =>
+        Versions.TryGetValue(protocolVersion, out ids!);
+}

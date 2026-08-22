@@ -8,6 +8,16 @@ public enum IdentityOutcome
     NotProtected,
     Allow,
     Deny,
+
+    /// <summary>
+    /// The connection may proceed, but ClientConnection/PlayStateInspector must enforce that the very
+    /// first Play-state chat message is a correct `/login &lt;password&gt;` — anything else (wrong
+    /// password, any other message, or a timeout) must disconnect and fast-track a ban strike. This
+    /// only applies to self-registered CaYaDev-Check names (a password set, no static allowlist entry
+    /// matched); admin-declared protected names with only a static allowlist get a strict Deny instead
+    /// — see the comment below for why the two cases aren't treated the same way.
+    /// </summary>
+    AllowPendingGraceAuthentication,
 }
 
 public sealed record IdentityDecision(IdentityOutcome Outcome, string Reason);
@@ -32,30 +42,29 @@ public static class IdentityGate
                 "Username is marked PremiumRequired but premium verification (Stage 4) is not yet implemented.");
         }
 
-        if (entry.StaticAllowlist.Count > 0 || entry.LearnedIps.Count > 0)
-        {
-            if (entry.IsIpRecognized(remoteAddress))
-                return new IdentityDecision(IdentityOutcome.Allow, "IP matched static allowlist or a learned IP.");
+        bool hasAnyProtection = entry.StaticAllowlist.Count > 0 || entry.LearnedIps.Count > 0 || entry.PasswordHash is not null;
+        if (!hasAnyProtection)
+            return new IdentityDecision(IdentityOutcome.NotProtected, "Identity record has no active protection configured.");
 
-            if (entry.PasswordHash is not null)
-            {
-                // Stage 3's chat-based password gate isn't implemented yet; fail closed rather than
-                // silently allowing an unrecognized IP through.
-                return new IdentityDecision(IdentityOutcome.Deny,
-                    "IP not recognized and the password gate (Stage 3) is not yet implemented.");
-            }
-
-            return new IdentityDecision(IdentityOutcome.Deny, "IP not in the static allowlist for this protected username.");
-        }
+        if (entry.IsIpRecognized(remoteAddress))
+            return new IdentityDecision(IdentityOutcome.Allow, "IP matched static allowlist or a learned IP.");
 
         if (entry.PasswordHash is not null)
         {
-            return new IdentityDecision(IdentityOutcome.Deny,
-                "Username is registered but the password gate (Stage 3) is not yet implemented.");
+            // Self-registered (CaYaDev-Check) name, unrecognized IP. There is no protocol-safe way to
+            // hold the connection open before Play state and prompt for a password (see docs/plan.md
+            // Stage 2 — no real client was available to verify a held connection is tolerated), so the
+            // grace-authentication window happens *inside* Play state instead: the player does join,
+            // but must send the correct password as literally their first message or get kicked.
+            return new IdentityDecision(IdentityOutcome.AllowPendingGraceAuthentication,
+                "Registered username, unrecognized IP — first Play-state message must be a correct /login.");
         }
 
-        // An entry exists (e.g. pre-created via CLI) but has no allowlist, password, or premium
-        // requirement configured yet — treat as not-yet-protected rather than denying everyone.
-        return new IdentityDecision(IdentityOutcome.NotProtected, "Identity record has no active protection configured.");
+        // Admin-declared protected name (static allowlist only, no self-service password) and the IP
+        // didn't match — strict deny, no grace window. This is deliberately stricter than the
+        // self-registration case above: these are the names (OP/admin accounts) the whole project
+        // exists to protect, so there's no acceptable window where an unverified connection is "in"
+        // even briefly.
+        return new IdentityDecision(IdentityOutcome.Deny, "IP not in the static allowlist for this protected username.");
     }
 }
