@@ -1,0 +1,23 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+## Test results
+[Tt]est[Rr]esult*/
+*.trx
+
+## Rider / VS Code
+.idea/
+.vscode/
+
+## OS cruft
+.DS_Store
+Thumbs.db
+
+## Local secrets / environment overrides — never commit real server data
+appsettings.*.local.json
+*.pfx
+*.pem

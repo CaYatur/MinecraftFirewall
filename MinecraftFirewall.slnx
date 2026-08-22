@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MinecraftFirewall.Admin/MinecraftFirewall.Admin.csproj" />
+    <Project Path="src/MinecraftFirewall.Proxy/MinecraftFirewall.Proxy.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MinecraftFirewall.Tests/MinecraftFirewall.Tests.csproj" />
+  </Folder>
+</Solution>
