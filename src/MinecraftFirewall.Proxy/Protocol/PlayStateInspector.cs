@@ -1,5 +1,6 @@
 using System.Net;
 using MinecraftFirewall.Proxy.Identity;
+using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
 
 namespace MinecraftFirewall.Proxy.Protocol;
@@ -21,6 +22,7 @@ public sealed class PlayStateInspector(
     bool startsTrusted,
     IdentityOptions identityOptions,
     IReadOnlyCollection<string> dangerousCommands,
+    MessagesOptions messages,
     PolicyEngine policyEngine,
     ILogger logger)
 {
@@ -82,7 +84,7 @@ public sealed class PlayStateInspector(
                 logger.LogWarning("[{Profile}] DANGEROUS COMMAND from non-trusted '{Username}' ({Ip}): {Command}",
                     profile.Name, username, remoteAddress, DangerousCommandMatcher.ExtractBaseCommand(text));
                 policyEngine.RegisterDangerousCommand(remoteAddress, profile.Name, username, DangerousCommandMatcher.ExtractBaseCommand(text));
-                DisconnectReason = "Bu komut için yetkiniz yok. Bağlantınız güvenlik nedeniyle kesildi.";
+                DisconnectReason = messages.DangerousCommandBlocked;
                 return;
             }
 
@@ -112,7 +114,7 @@ public sealed class PlayStateInspector(
         logger.LogWarning("[{Profile}] grace-authentication FAILED for '{Username}' from {Ip} — first message was not a correct /login.",
             profile.Name, username, remoteAddress);
         policyEngine.RegisterGraceAuthFailure(remoteAddress, profile.Name, username);
-        DisconnectReason = "Kimlik doğrulama başarısız. Bu IP tanınmıyor ve doğru şifre girilmedi.";
+        DisconnectReason = messages.GraceAuthenticationFailed;
     }
 
     private bool HandleCayaDevCheckCommand(string commandText)

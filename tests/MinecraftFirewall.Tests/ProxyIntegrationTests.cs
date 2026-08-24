@@ -4,6 +4,7 @@ using MinecraftFirewall.Proxy;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.IpIntel;
+using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
 using MinecraftFirewall.Proxy.Protocol;
 using MinecraftFirewall.Proxy.RateLimiting;
@@ -63,10 +64,11 @@ public class ProxyIntegrationTests : IAsyncLifetime
 
         var identityOptions = new IdentityOptions();
         var dangerousCommands = new DangerousCommandOptions().Commands;
+        var messages = new MessagesOptions();
 
         _listenersCts = new CancellationTokenSource();
-        var listenerA = new ProxyListener(_profileA, _policyEngine, identityOptions, dangerousCommands, NullLogger.Instance);
-        var listenerB = new ProxyListener(_profileB, _policyEngine, identityOptions, dangerousCommands, NullLogger.Instance);
+        var listenerA = new ProxyListener(_profileA, _policyEngine, identityOptions, dangerousCommands, messages, NullLogger.Instance);
+        var listenerB = new ProxyListener(_profileB, _policyEngine, identityOptions, dangerousCommands, messages, NullLogger.Instance);
         _ = listenerA.RunAsync(_listenersCts.Token);
         _ = listenerB.RunAsync(_listenersCts.Token);
 

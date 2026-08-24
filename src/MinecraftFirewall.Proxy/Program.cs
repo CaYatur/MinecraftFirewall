@@ -2,6 +2,7 @@ using MinecraftFirewall.Proxy;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.IpIntel;
+using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
 using MinecraftFirewall.Proxy.RateLimiting;
 using Serilog;
@@ -21,6 +22,7 @@ builder.Services.Configure<FirewallBanOptions>(builder.Configuration.GetSection(
 builder.Services.Configure<NeverBanOptions>(builder.Configuration.GetSection(NeverBanOptions.SectionName));
 builder.Services.Configure<IdentityOptions>(builder.Configuration.GetSection(IdentityOptions.SectionName));
 builder.Services.Configure<DangerousCommandOptions>(builder.Configuration.GetSection(DangerousCommandOptions.SectionName));
+builder.Services.Configure<MessagesOptions>(builder.Configuration.GetSection(MessagesOptions.SectionName));
 
 builder.Services.AddHttpClient();
 

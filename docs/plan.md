@@ -9,7 +9,7 @@
   server (see the Stage 2 section below); packet IDs sourced from Mojang's own generated data report,
   not a wiki. The "hold Play-state traffic" question was decided *not* to be pursued without a real
   graphical client to test against — see the Stage 3 section for the fallback design that resulted.
-- **Stage 3 — done, 130 automated tests passing (`dotnet test`).** Compression-aware frame reading,
+- **Stage 3 — done, 147 automated tests passing (`dotnet test`).** Compression-aware frame reading,
   `ProtocolVersionRegistry` (protocol 774 populated), `PlayStateInspector` (command auditing +
   dangerous-command detection + fast-track bans), the CaYaDev-Check self-service `/register`/`/login`
   gate with grace-authentication, PBKDF2 password hashing, TTL/cap-bounded learned IPs. **Not yet done:**
@@ -25,10 +25,19 @@
 - **Allowed-domains restriction — done.** Per-profile `AllowedHostnames` allowlist (`Policy/HostnameMatcher.cs`
   + `PolicyEngine.EvaluateHostname`), checked right after the Handshake is parsed, before the status/login
   branch. Supports exact hostnames and `*.example.com` wildcards; a mismatch on a login attempt sends a
-  Turkish kick message and registers a strike (not a fast-track ban — a stale server-list entry is a
+  kick message and registers a strike (not a fast-track ban — a stale server-list entry is a
   plausible legitimate cause). Empty list (default) is fully backward-compatible: no restriction. See the
   requirement-7 honesty note below — **this is not a cryptographic boundary**, only the literal
   IP-firewall-rule setup described there makes it one.
+- **Configurable player-facing messages — done.** All 5 kick/disconnect strings (generic policy deny,
+  unsupported-client-version, hostname-not-allowed, dangerous-command-blocked, grace-auth-failed) moved
+  out of hardcoded literals into `Messages/MessagesOptions.cs`, bound from a `Messages` section in
+  `appsettings.json` via the same `IOptions<T>` pattern as every other section. Code defaults are
+  English; the shipped `appsettings.json` carries a commented-out Turkish block as a ready-to-use
+  alternative (the project's earlier hardcoded strings were Turkish — that text didn't disappear, it
+  moved to being an opt-in example instead of the compiled-in default). `AppSettingsJsonBindingTests`
+  loads the real shipped file through the actual config pipeline (not a fixture) specifically to catch
+  a JSON/comment syntax error in that file, since nothing else ever parses it.
 
 **Next session should start with:** a real end-to-end run — start a local Paper server (a fresh one can
 be re-downloaded via the PaperMC Fill API; the previous one lived at `test-server/`, gitignored, and was
@@ -51,6 +60,7 @@ Requirements gathered across this planning session, in the order they came up:
 5. An additional, branded, lightweight subsystem — **"CaYaDev-Check"** — where players can register/log in, get remembered by IP so they aren't re-prompted, alongside everything above.
 6. **The strongest request**: if a player's *first* login under a given username is done from a genuine (premium/Microsoft-licensed) Minecraft account, that username should be permanently theirs — nobody else, cracked or otherwise, should ever be able to use that name again, even though the server itself stays `online-mode=false`.
 7. **Allowed-domains restriction** (added after Stage 3 shipped): only certain domain names should be able to reach the server at all — a connection using the raw server IP directly should be blocked, even if the attacker knows it, and multiple allowed domains must be supported.
+8. **Configurable, English-by-default messages** (added after requirement 7): every kick/disconnect message the app can send must be editable without touching code, and an English version must exist and be the default (the app's messages were originally hardcoded in Turkish).
 
 **Architecture: reverse proxy**, not raw packet-level filtering (WinDivert) — Minecraft's VarInt-length-prefixed TCP stream is far simpler to parse via `NetworkStream` than via reassembled raw IP packets, and this is the architecture real Minecraft firewall/anti-DDoS products use. One Windows process hosts N listeners (one per configured server profile) and shares IP-intel and firewall-ban infrastructure across all of them, so a block on one server applies machine-wide.
 

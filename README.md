@@ -4,7 +4,7 @@ Windows reverse-proxy firewall for Minecraft Java Edition servers running `onlin
 protection plugins. It sits in front of the real server (which binds to `127.0.0.1` only) and decides,
 per connection, whether to forward it — without any plugin/mod inside Minecraft itself.
 
-## Status: Stage 3 of 4 (130 automated tests passing)
+## Status: Stage 3 of 4 (147 automated tests passing)
 
 This is an in-progress build. See [`docs/plan.md`](docs/plan.md) for the complete staged design doc and
 current status. What's implemented right now:
@@ -32,6 +32,9 @@ current status. What's implemented right now:
 - **Windows Firewall bans** — repeat offenders get a real, machine-wide block rule via the
   `INetFwPolicy2` COM API (never `netsh` with interpolated input), with a TTL, a hardcoded never-ban list
   (loopback/RFC1918/admin allowlist), and an in-process fallback if the service isn't running elevated.
+- **Configurable, English-by-default kick messages** — every player-facing disconnect string lives in
+  one `Messages` section of `appsettings.json` (English defaults, nothing hardcoded in the binary); a
+  ready-to-uncomment Turkish example ships alongside it.
 
 **Not implemented yet:** admin-declared premium (real Mojang account) verification that permanently
 locks a username to its genuine owner (Stage 4 — the feature behind the strongest original request), and
@@ -85,6 +88,8 @@ docs/protocol/                     Sourced packet-ID reference data (Mojang's ow
      Point an A/CNAME record for each domain at the proxy machine's public IP first — the client just
      needs to resolve the name before connecting, the proxy doesn't do DNS itself. Read the honesty
      note above before relying on this for anything more than defense-in-depth.
+   - Optional: edit the top-level `Messages` section to change any kick/disconnect wording, or to
+     switch the shipped Turkish example block in for the English defaults.
 4. Build and run:
 
 ```bash

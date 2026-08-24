@@ -1,4 +1,5 @@
 using MinecraftFirewall.Proxy.Identity;
+using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
 using Microsoft.Extensions.Options;
 
@@ -10,6 +11,7 @@ public sealed class ProxyHostService(
     PolicyEngine policyEngine,
     IOptions<IdentityOptions> identityOptions,
     IOptions<Policy.DangerousCommandOptions> dangerousCommandOptions,
+    IOptions<MessagesOptions> messagesOptions,
     ILoggerFactory loggerFactory) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -22,11 +24,12 @@ public sealed class ProxyHostService(
         }
 
         IReadOnlyCollection<string> dangerousCommands = dangerousCommandOptions.Value.Commands;
+        MessagesOptions messages = messagesOptions.Value;
 
         var tasks = profiles.Select(profile =>
         {
             var logger = loggerFactory.CreateLogger($"ProxyListener.{profile.Name}");
-            var listener = new ProxyListener(profile, policyEngine, identityOptions.Value, dangerousCommands, logger);
+            var listener = new ProxyListener(profile, policyEngine, identityOptions.Value, dangerousCommands, messages, logger);
             return listener.RunAsync(stoppingToken);
         }).ToArray();
 

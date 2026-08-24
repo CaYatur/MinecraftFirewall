@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using MinecraftFirewall.Proxy.Identity;
+using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
 using MinecraftFirewall.Proxy.Protocol;
 
@@ -26,6 +27,7 @@ public static class ClientConnection
         PolicyEngine policyEngine,
         IdentityOptions identityOptions,
         IReadOnlyCollection<string> dangerousCommands,
+        MessagesOptions messages,
         ILogger logger,
         CancellationToken hostShutdown)
     {
@@ -68,8 +70,7 @@ public static class ClientConnection
             logger.LogInformation("[{Profile}] connection from {Ip} denied: {Reason}", profile.Name, remoteAddress, hostnameDecision.Reason);
             if (handshake.NextState == HandshakeNextState.Login)
             {
-                await TrySendDisconnectAsync(client, clientStream,
-                    "Bu sunucuya sadece izin verilen adres(ler) üzerinden bağlanılabilir.", hostShutdown).ConfigureAwait(false);
+                await TrySendDisconnectAsync(client, clientStream, messages.HostnameNotAllowed, hostShutdown).ConfigureAwait(false);
             }
             return;
         }
@@ -81,7 +82,7 @@ public static class ClientConnection
         }
 
         await HandleLoginAsync(client, clientStream, handshakeFrame, handshake, profile, remoteAddress,
-            policyEngine, identityOptions, dangerousCommands, logger, preLoginCts, hostShutdown).ConfigureAwait(false);
+            policyEngine, identityOptions, dangerousCommands, messages, logger, preLoginCts, hostShutdown).ConfigureAwait(false);
     }
 
     private static async Task HandleStatusAsync(TcpClient client, NetworkStream clientStream, Frame handshakeFrame,
@@ -105,7 +106,7 @@ public static class ClientConnection
 
     private static async Task HandleLoginAsync(TcpClient client, NetworkStream clientStream, Frame handshakeFrame, HandshakeInfo handshake,
         ServerProfile profile, IPAddress remoteAddress, PolicyEngine policyEngine, IdentityOptions identityOptions,
-        IReadOnlyCollection<string> dangerousCommands, ILogger logger, CancellationTokenSource preLoginCts, CancellationToken hostShutdown)
+        IReadOnlyCollection<string> dangerousCommands, MessagesOptions messages, ILogger logger, CancellationTokenSource preLoginCts, CancellationToken hostShutdown)
     {
         Frame loginStartFrame;
         string username;
@@ -130,7 +131,7 @@ public static class ClientConnection
         {
             logger.LogInformation("[{Profile}] login denied for '{Username}' from {Ip}: {Reason}",
                 profile.Name, username, remoteAddress, decision.Reason);
-            await TrySendDisconnectAsync(client, clientStream, "This connection was blocked by MinecraftFirewall.", hostShutdown).ConfigureAwait(false);
+            await TrySendDisconnectAsync(client, clientStream, messages.GenericDenied, hostShutdown).ConfigureAwait(false);
             return;
         }
 
@@ -143,8 +144,7 @@ public static class ClientConnection
             // stand in for a security check on a registered username.
             logger.LogWarning("[{Profile}] '{Username}' requires grace-authentication but protocol version {Version} has no verified packet table — denying.",
                 profile.Name, username, handshake.ProtocolVersion);
-            await TrySendDisconnectAsync(client, clientStream,
-                "Bu istemci sürümü desteklenmiyor. Sunucu yöneticisine başvurun.", hostShutdown).ConfigureAwait(false);
+            await TrySendDisconnectAsync(client, clientStream, messages.UnsupportedClientVersion, hostShutdown).ConfigureAwait(false);
             return;
         }
 
@@ -163,7 +163,7 @@ public static class ClientConnection
             var inspector = new PlayStateInspector(
                 profile, username, remoteAddress, packetIds, decision.GraceAuth,
                 startsTrusted: decision.GraceAuth is null,
-                identityOptions, dangerousCommands, policyEngine, logger);
+                identityOptions, dangerousCommands, messages, policyEngine, logger);
 
             await PumpWithInspectionAsync(client, clientStream, backendStream, inspector, packetIds, hostShutdown).ConfigureAwait(false);
         }

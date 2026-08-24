@@ -3,6 +3,7 @@ using MinecraftFirewall.Proxy;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.IpIntel;
+using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
 using MinecraftFirewall.Proxy.Protocol;
 using MinecraftFirewall.Proxy.RateLimiting;
@@ -18,6 +19,7 @@ public class PlayStateInspectorTests
     private static readonly IPAddress RemoteIp = IPAddress.Parse("203.0.113.1");
     private static readonly IdentityOptions DefaultIdentityOptions = new() { LearnedIpTtl = TimeSpan.FromDays(30), MaxLearnedIpsPerUsername = 5, PasswordMinLength = 4 };
     private static readonly string[] DangerousCommands = ["op", "ban", "stop"];
+    private static readonly MessagesOptions Messages = new();
 
     private static PlayStatePacketIds GetIds()
     {
@@ -42,7 +44,7 @@ public class PlayStateInspectorTests
     }
 
     private static PlayStateInspector CreateInspector(Fixture fixture, string username, GraceAuthRequirement? graceAuth = null, bool startsTrusted = true) =>
-        new(fixture.Profile, username, RemoteIp, Ids, graceAuth, startsTrusted, DefaultIdentityOptions, DangerousCommands, fixture.PolicyEngine, NullLogger.Instance);
+        new(fixture.Profile, username, RemoteIp, Ids, graceAuth, startsTrusted, DefaultIdentityOptions, DangerousCommands, Messages, fixture.PolicyEngine, NullLogger.Instance);
 
     private static byte[] ConfigFinishFrame() =>
         MinecraftPacketBuilder.BuildCompressedEmptyPacketFrame(Ids.ConfigurationFinishConfigurationServerbound);
