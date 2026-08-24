@@ -4,7 +4,7 @@ Windows reverse-proxy firewall for Minecraft Java Edition servers running `onlin
 protection plugins. It sits in front of the real server (which binds to `127.0.0.1` only) and decides,
 per connection, whether to forward it — without any plugin/mod inside Minecraft itself.
 
-## Status: Stage 3 of 4 (169 automated tests passing)
+## Status: Stage 3 of 4 (171 automated tests passing)
 
 This is an in-progress build. See [`docs/plan.md`](docs/plan.md) for the complete staged design doc and
 current status. What's implemented right now:
@@ -48,10 +48,15 @@ current status. What's implemented right now:
 **Not implemented yet:** admin-declared premium (real Mojang account) verification that permanently
 locks a username to its genuine owner (Stage 4 — the feature behind the strongest original request; the
 `require-premium` CLI command above sets the flag, but until Stage 4 ships, a `PremiumRequired` name is
-simply denied outright for everyone — no verification path exists yet). Also still outstanding: a live
-end-to-end run of the compiled service against a real Minecraft client, as opposed to the unit/
-integration tests (which use synthetic but protocol-verified packets) — see `docs/plan.md` for exactly
-what to run next.
+simply denied outright for everyone — no verification path exists yet).
+
+**Verified end-to-end, not just with synthetic unit tests:** the compiled service was run against a
+real local Paper server, driven through the proxy's public port by a real protocol-correct client. This
+found and fixed a real bug in `PlayStateInspector`'s phase tracking that would have made CaYaDev-Check's
+grace-authentication fail for every legitimate reconnecting player — see `docs/plan.md`'s "Live
+end-to-end verification" note for the full story. Not exercised: an actual graphical Minecraft
+client/launcher (none was available in this environment) — the diagnostic client used is a real,
+protocol-correct implementation, not a mock, but it is still this project's own code.
 
 ## Honesty notes
 

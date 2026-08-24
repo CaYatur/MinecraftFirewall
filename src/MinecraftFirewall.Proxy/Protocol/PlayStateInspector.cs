@@ -6,12 +6,14 @@ using MinecraftFirewall.Proxy.Policy;
 namespace MinecraftFirewall.Proxy.Protocol;
 
 /// <summary>
-/// Inspects the client-to-backend half of a Play-state connection. Parses the outer frame always;
-/// decodes a packet's fields only for the handful of packet IDs it cares about (Configuration's
-/// Finish Configuration, and Play's chat/chat_command/chat_command_signed); everything else is
-/// forwarded byte-for-byte from DecodedPacket.RawFrame, never re-serialized. The backend-to-client
-/// direction is NOT handled here — ClientConnection still uses a plain byte pump for that side, since
-/// Stage 3 has no reason to inspect anything the server sends.
+/// Inspects the client-to-backend half of a Play-state connection, starting from the very first
+/// packet after Login Start. Tracks phase as Login (always exactly one packet, Login Acknowledged,
+/// blindly forwarded — see the constructor's initial _awaitingLoginAcknowledged field and the comment
+/// at its use site for why this step exists and isn't optional) -> Configuration (forwarded
+/// byte-for-byte until Finish Configuration is seen) -> Play (chat/chat_command/chat_command_signed
+/// decoded; everything else forwarded byte-for-byte from DecodedPacket.RawFrame, never
+/// re-serialized). The backend-to-client direction is NOT handled here — ClientConnection still uses
+/// a plain byte pump for that side, since Stage 3 has no reason to inspect anything the server sends.
 /// </summary>
 public sealed class PlayStateInspector(
     ServerProfile profile,
@@ -28,6 +30,7 @@ public sealed class PlayStateInspector(
 {
     private const int MaxServerboundFrameSize = 2 * 1024 * 1024;
 
+    private bool _awaitingLoginAcknowledged = true;
     private bool _inPlayState;
     private bool _graceAuthResolved;
     private bool _isTrusted = startsTrusted;
@@ -45,6 +48,30 @@ public sealed class PlayStateInspector(
 
             if (!_inPlayState)
             {
+                if (_awaitingLoginAcknowledged)
+                {
+                    // The very first serverbound packet PlayStateInspector ever sees is always Login
+                    // Acknowledged — the one fixed packet that ends the Login state, sent exactly once
+                    // per connection, immediately after Login Start. It carries no fields, but its
+                    // packet ID (0x03) is defined in the LOGIN state's own packet-ID namespace, which
+                    // is completely independent from Configuration's — Configuration's own Finish
+                    // Configuration (serverbound) *also* happens to be ID 0x03, coincidentally, in its
+                    // own namespace. A live end-to-end run against a real client caught this: without
+                    // this explicit first-packet step, that ID collision made the very first packet
+                    // (Login Acknowledged) get misidentified as Finish Configuration, flipping
+                    // _inPlayState a full protocol phase too early — which then meant every later
+                    // Configuration-phase packet was inspected as if it were a Play-state message,
+                    // including matching against chat/command detection on packet IDs that happen to
+                    // coincide with Configuration's own (e.g. the serverbound Known Packs response
+                    // sharing an ID with chat_command_signed). For a real grace-authentication-pending
+                    // connection this would consume the player's one grace-auth attempt on garbage
+                    // Configuration bytes before they ever reached Play state, failing every legitimate
+                    // login. See docs/plan.md's live-verification note for how this was found.
+                    _awaitingLoginAcknowledged = false;
+                    await backendStream.WriteAsync(packet.RawFrame, ct).ConfigureAwait(false);
+                    continue;
+                }
+
                 if (packet.PacketId == packetIds.ConfigurationFinishConfigurationServerbound && packet.Fields.Length == 0)
                     _inPlayState = true;
 

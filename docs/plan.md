@@ -9,13 +9,62 @@
   server (see the Stage 2 section below); packet IDs sourced from Mojang's own generated data report,
   not a wiki. The "hold Play-state traffic" question was decided *not* to be pursued without a real
   graphical client to test against — see the Stage 3 section for the fallback design that resulted.
-- **Stage 3 — done, 169 automated tests passing (`dotnet test`).** Compression-aware frame reading,
+- **Stage 3 — done, 171 automated tests passing (`dotnet test`).** Compression-aware frame reading,
   `ProtocolVersionRegistry` (protocol 774 populated), `PlayStateInspector` (command auditing +
   dangerous-command detection + fast-track bans), the CaYaDev-Check self-service `/register`/`/login`
-  gate with grace-authentication, PBKDF2 password hashing, TTL/cap-bounded learned IPs. **Not yet done:**
-  a live end-to-end run of the actual compiled `MinecraftFirewall.Proxy` service (as opposed to unit/
-  integration tests with synthetic packets) against the real local Paper test server — this is the
-  natural next verification step, see "Next session" below.
+  gate with grace-authentication, PBKDF2 password hashing, TTL/cap-bounded learned IPs.
+- **Live end-to-end verification — done, and it found a real bug.** Ran the actual compiled
+  `MinecraftFirewall.Proxy` against a real local Paper 1.21.11 server, driven through the proxy's
+  public port by a real protocol-correct client (`tools/MinecraftFirewall.ProtocolSpike`, extended
+  with `playMode` — `register:<pw>`/`login:<pw>`/`chat` — and a `bindAddress` argument to simulate
+  connecting from a second source IP without needing a second machine). This is exactly the
+  verification step flagged as outstanding at the end of the previous session, and it justified doing
+  it before Stage 4: **it caught a real, serious bug that no synthetic unit test could have found.**
+  - **The bug**: `PlayStateInspector.RunAsync` started reading immediately after Login Start, so the
+    very first packet it ever saw was the client's Login Acknowledged — but its Play-state-entry check
+    only looked for packet ID 0x03 with empty fields, which is *also* Login Acknowledged's own ID
+    (0x03, empty fields) in the Login state's own packet-ID namespace. Each protocol state has an
+    independent ID space, so Login Acknowledged and Configuration's Finish Configuration coincidentally
+    share ID 0x03 without being the same packet at all. The result: `_inPlayState` flipped a full
+    protocol phase too early, on the very first packet, every single connection — so every
+    Configuration-phase packet after it got inspected as if it were a Play-state message. The real
+    damage: the Configuration-phase serverbound Known Packs response happens to share its ID with
+    `PlayChatCommandSignedServerbound`, so it was consistently misread as a chat command (garbage
+    bytes from misaligned field parsing, observed live as a literal tab character logged as the
+    "command"). For any grace-authentication-pending connection — i.e. **every CaYaDev-Check
+    registered player reconnecting from an unrecognized IP, which is the feature's whole reason to
+    exist** — this consumed the player's one grace-auth attempt on that garbage before they ever
+    reached Play state, meaning **every legitimate grace-authentication would have failed, unconditionally,
+    for every real client**, not just malicious ones. This was completely invisible to
+    `PlayStateInspectorTests.cs` because every test's synthetic input started exactly at a
+    hand-built Finish Configuration frame, skipping Login Acknowledged entirely — a simplification in
+    the test fixture that hid the exact packet sequence a real client actually sends.
+  - **The fix**: `PlayStateInspector` now tracks an explicit `_awaitingLoginAcknowledged` step before
+    its existing Configuration-vs-Play detection — the first serverbound packet it reads is always
+    unconditionally forwarded and treated as Login Acknowledged, whatever its content, and only
+    packets *after* that are checked against the real Finish Configuration ID. See the code comment at
+    its use site in `PlayStateInspector.cs` for the full explanation. `PlayStateInspectorTests.cs` was
+    updated so every test supplies this frame first (via a new `LoginAckFrame()` helper), plus a new
+    dedicated regression test (`GraceAuth_RealisticConfigurationTraffic_BeforeFinishConfiguration_DoesNotConsumeGraceAuthEarly`)
+    that reproduces the exact scenario: a Configuration-phase packet sharing an ID with a Play-state
+    chat/command packet, arriving before Finish Configuration, must not be treated as the player's
+    first Play-state message.
+  - **Confirmed fixed, live, after the fix**: registered a fresh username via a real `/register` sent
+    by the spike client through the real proxy; reconnected as that username bound to a second local
+    address (`127.0.0.2` — Windows treats all of `127.0.0.0/8` as loopback, so this simulates a second
+    source IP without a second machine) with a wrong password; the proxy correctly ran the
+    grace-authentication check *only* on the real first Play-state message (no more spurious
+    Configuration-phase misfire), correctly failed it, and sent a real Play-state Disconnect kick that
+    the spike client — acting as a real protocol-correct client, not this project's own reader — parsed
+    successfully as valid NBT with the exact configured message text. This is also the first live
+    confirmation that `TrySendPlayDisconnectAsync`'s NBT/compressed-frame kick format is correct
+    against a real client, which was a separately-flagged, previously-unverified risk.
+  - **Also confirmed live**: normal login → CaYaDev-Check registration → Play-state traffic relay,
+    end-to-end through the real compiled service.
+  - **Still not exercised**: an actual graphical Minecraft client (this environment has none) — the
+    spike client is a real, protocol-correct implementation, not a mock, but it is still this
+    project's own code. A real launcher/client run remains a reasonable follow-up if anyone wants
+    additional confidence before relying on this in production.
 - **Stage 4 — not started.** Premium/Mojang verification (admin-declared `PremiumRequired`, real
   encryption handshake + `hasJoined`, login-splice, UUID pinning). This is the feature behind the
   user's strongest original request (a genuine account permanently owning a username) and hasn't been
@@ -97,14 +146,17 @@
   the primary X4BNet list is checked first, skipping the ipinfo call entirely when it already decided
   the outcome.
 
-**Next session should start with:** a real end-to-end run — start a local Paper server (a fresh one can
-be re-downloaded via the PaperMC Fill API; the previous one lived at `test-server/`, gitignored, and was
-stopped/not preserved), point a `ServerProfiles` entry in `appsettings.json` at it, run
-`dotnet run --project src/MinecraftFirewall.Proxy`, and connect a real Minecraft client (or extend
-`tools/MinecraftFirewall.ProtocolSpike` to connect *through* the proxy's public port instead of directly
-to the backend) to confirm the full pipeline — not just synthetic-packet unit tests — actually works:
-normal login, a protected-username denial, a `/register` + reconnect-from-new-IP grace-auth flow, and a
-dangerous command triggering a kick. Then proceed to Stage 4.
+**Next session should start with:** Stage 4 (premium/Mojang verification). The live end-to-end run this
+note used to point at is now done — see the "Live end-to-end verification" entry above, including the
+real bug it found and fixed in `PlayStateInspector`'s Login→Configuration→Play phase tracking. Per the
+advisor consultation that shaped this session's ordering (ipinfo → Admin CLI → live verification → Stage
+4), build Stage 4 in two commits: (a) the verifier — RSA keypair, Encryption Request/Response,
+shared-secret decrypt, `hasJoined` call, UUID pin check — fully unit-testable with no sockets; then (b)
+the login splice — the AES-CFB8 stream shim that makes the client side of the connection encrypted while
+the backend side stays plaintext, which is real, and the largest single, remaining risk in this project
+(a framing bug there breaks connections, not just kicks — see the CFB8 streaming-byte-at-a-time test
+guidance the advisor gave, and consider a second live end-to-end pass with a real premium account before
+calling it done, the same way the Play-state kick path was until this session).
 
 ## Context
 

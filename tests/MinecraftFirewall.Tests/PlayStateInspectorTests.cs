@@ -47,6 +47,17 @@ public class PlayStateInspectorTests
     private static PlayStateInspector CreateInspector(Fixture fixture, string username, GraceAuthRequirement? graceAuth = null, bool startsTrusted = true) =>
         new(fixture.Profile, username, RemoteIp, Ids, graceAuth, startsTrusted, DefaultIdentityOptions, DangerousCommands, Messages, fixture.PolicyEngine, NullLogger.Instance);
 
+    // PlayStateInspector unconditionally treats the very first serverbound packet it ever reads as
+    // Login Acknowledged (see the comment at its use site in PlayStateInspector.cs — a real
+    // end-to-end run caught a bug here: Login Acknowledged and Configuration's Finish Configuration
+    // happen to share packet ID 0x03 in their own separate per-state namespaces, which used to make
+    // the first packet get misidentified). Every RunAsync call in these tests must supply this frame
+    // first, or the test would silently be exercising the wrong phase. Content genuinely doesn't
+    // matter for this slot; using the same builder as ConfigFinishFrame() below is intentional, not a
+    // typo — they happen to produce identical bytes for protocol 774, exactly like the real protocol.
+    private static byte[] LoginAckFrame() =>
+        MinecraftPacketBuilder.BuildCompressedEmptyPacketFrame(0x03);
+
     private static byte[] ConfigFinishFrame() =>
         MinecraftPacketBuilder.BuildCompressedEmptyPacketFrame(Ids.ConfigurationFinishConfigurationServerbound);
 
@@ -75,17 +86,30 @@ public class PlayStateInspectorTests
     }
 
     [Fact]
+    public async Task LoginAcknowledged_IsForwardedVerbatim_WithoutEnteringConfigurationDetectionEarly()
+    {
+        var fixture = CreateFixture();
+        var inspector = CreateInspector(fixture, "Player1");
+
+        var (forwarded, disconnect) = await RunAsync(inspector, LoginAckFrame());
+
+        Assert.Equal<byte>(LoginAckFrame(), forwarded);
+        Assert.Null(disconnect);
+    }
+
+    [Fact]
     public async Task ConfigurationPhaseFrames_AreForwardedVerbatim_WithoutInspection()
     {
         var fixture = CreateFixture();
         var inspector = CreateInspector(fixture, "Player1");
 
-        // An arbitrary Configuration-phase frame (not Finish Configuration) before entering Play state.
+        // An arbitrary Configuration-phase frame (not Finish Configuration), after the mandatory
+        // Login Acknowledged slot, before entering Play state.
         byte[] someConfigFrame = MinecraftPacketBuilder.BuildCompressedStringPacketFrame(0x02, "minecraft:brand-ish-payload");
 
-        var (forwarded, disconnect) = await RunAsync(inspector, someConfigFrame);
+        var (forwarded, disconnect) = await RunAsync(inspector, LoginAckFrame(), someConfigFrame);
 
-        Assert.Equal<byte>(someConfigFrame, forwarded);
+        Assert.Equal<byte>([.. LoginAckFrame(), .. someConfigFrame], forwarded);
         Assert.Null(disconnect);
     }
 
@@ -96,11 +120,11 @@ public class PlayStateInspectorTests
         var inspector = CreateInspector(fixture, "Player1");
         byte[] chat = ChatFrame("hello world");
 
-        var (forwarded, disconnect) = await RunAsync(inspector, ConfigFinishFrame(), chat);
+        var (forwarded, disconnect) = await RunAsync(inspector, LoginAckFrame(), ConfigFinishFrame(), chat);
 
-        // The Finish Configuration frame itself is legitimately forwarded too — the real backend
-        // needs it to make its own Configuration->Play transition.
-        Assert.Equal<byte>([.. ConfigFinishFrame(), .. chat], forwarded);
+        // Login Acknowledged and Finish Configuration are both legitimately forwarded too — the real
+        // backend needs them to make its own Login->Configuration->Play transitions.
+        Assert.Equal<byte>([.. LoginAckFrame(), .. ConfigFinishFrame(), .. chat], forwarded);
         Assert.Null(disconnect);
     }
 
@@ -111,9 +135,9 @@ public class PlayStateInspectorTests
         var inspector = CreateInspector(fixture, "Player1");
         byte[] command = CommandFrame("spawn");
 
-        var (forwarded, disconnect) = await RunAsync(inspector, ConfigFinishFrame(), command);
+        var (forwarded, disconnect) = await RunAsync(inspector, LoginAckFrame(), ConfigFinishFrame(), command);
 
-        Assert.Equal<byte>([.. ConfigFinishFrame(), .. command], forwarded);
+        Assert.Equal<byte>([.. LoginAckFrame(), .. ConfigFinishFrame(), .. command], forwarded);
         Assert.Null(disconnect);
     }
 
@@ -124,9 +148,9 @@ public class PlayStateInspectorTests
         var inspector = CreateInspector(fixture, "Attacker", startsTrusted: false);
         byte[] command = CommandFrame("op Attacker");
 
-        var (forwarded, disconnect) = await RunAsync(inspector, ConfigFinishFrame(), command);
+        var (forwarded, disconnect) = await RunAsync(inspector, LoginAckFrame(), ConfigFinishFrame(), command);
 
-        Assert.Equal<byte>(ConfigFinishFrame(), forwarded); // the dangerous command itself never reached the backend
+        Assert.Equal<byte>([.. LoginAckFrame(), .. ConfigFinishFrame()], forwarded); // the dangerous command itself never reached the backend
         Assert.NotNull(disconnect);
         Assert.True(fixture.BanService.IsBanned(RemoteIp)); // one dangerous command == immediate ban, not 3 strikes
     }
@@ -138,9 +162,9 @@ public class PlayStateInspectorTests
         var inspector = CreateInspector(fixture, "Admin", startsTrusted: true);
         byte[] command = CommandFrame("op SomeoneElse");
 
-        var (forwarded, disconnect) = await RunAsync(inspector, ConfigFinishFrame(), command);
+        var (forwarded, disconnect) = await RunAsync(inspector, LoginAckFrame(), ConfigFinishFrame(), command);
 
-        Assert.Equal<byte>([.. ConfigFinishFrame(), .. command], forwarded);
+        Assert.Equal<byte>([.. LoginAckFrame(), .. ConfigFinishFrame(), .. command], forwarded);
         Assert.Null(disconnect);
         Assert.False(fixture.BanService.IsBanned(RemoteIp));
     }
@@ -152,9 +176,9 @@ public class PlayStateInspectorTests
         var inspector = CreateInspector(fixture, "NewPlayer", startsTrusted: false);
         byte[] register = CommandFrame("register hunter2");
 
-        var (forwarded, disconnect) = await RunAsync(inspector, ConfigFinishFrame(), register);
+        var (forwarded, disconnect) = await RunAsync(inspector, LoginAckFrame(), ConfigFinishFrame(), register);
 
-        Assert.Equal<byte>(ConfigFinishFrame(), forwarded); // password command must never reach the backend
+        Assert.Equal<byte>([.. LoginAckFrame(), .. ConfigFinishFrame()], forwarded); // password command must never reach the backend
         Assert.Null(disconnect);
 
         var entry = fixture.Profile.IdentityStore.Find("NewPlayer");
@@ -171,7 +195,7 @@ public class PlayStateInspectorTests
         var inspector = CreateInspector(fixture, "NewPlayer", startsTrusted: false);
         byte[] register = CommandFrame("register ab"); // shorter than PasswordMinLength=4
 
-        await RunAsync(inspector, ConfigFinishFrame(), register);
+        await RunAsync(inspector, LoginAckFrame(), ConfigFinishFrame(), register);
 
         Assert.Null(fixture.Profile.IdentityStore.Find("NewPlayer"));
     }
@@ -187,11 +211,11 @@ public class PlayStateInspectorTests
         byte[] login = CommandFrame("login correctpw");
         byte[] followUpDangerousCommand = CommandFrame("op Player1"); // should now be exempt, since trust flipped
 
-        var (forwarded, disconnect) = await RunAsync(inspector, ConfigFinishFrame(), login, followUpDangerousCommand);
+        var (forwarded, disconnect) = await RunAsync(inspector, LoginAckFrame(), ConfigFinishFrame(), login, followUpDangerousCommand);
 
         Assert.Null(disconnect);
         Assert.True(entry.IsIpRecognized(RemoteIp));
-        Assert.Equal<byte>([.. ConfigFinishFrame(), .. followUpDangerousCommand], forwarded); // login itself swallowed, the command after wasn't blocked
+        Assert.Equal<byte>([.. LoginAckFrame(), .. ConfigFinishFrame(), .. followUpDangerousCommand], forwarded); // login itself swallowed, the command after wasn't blocked
         Assert.False(fixture.BanService.IsBanned(RemoteIp));
     }
 
@@ -205,9 +229,9 @@ public class PlayStateInspectorTests
 
         byte[] wrongLogin = CommandFrame("login wrongpassword");
 
-        var (forwarded, disconnect) = await RunAsync(inspector, ConfigFinishFrame(), wrongLogin);
+        var (forwarded, disconnect) = await RunAsync(inspector, LoginAckFrame(), ConfigFinishFrame(), wrongLogin);
 
-        Assert.Equal<byte>(ConfigFinishFrame(), forwarded);
+        Assert.Equal<byte>([.. LoginAckFrame(), .. ConfigFinishFrame()], forwarded);
         Assert.NotNull(disconnect);
         Assert.False(entry.IsIpRecognized(RemoteIp));
         Assert.True(fixture.BanService.IsBanned(RemoteIp));
@@ -223,10 +247,35 @@ public class PlayStateInspectorTests
 
         byte[] plainChat = ChatFrame("hi everyone");
 
-        var (forwarded, disconnect) = await RunAsync(inspector, ConfigFinishFrame(), plainChat);
+        var (forwarded, disconnect) = await RunAsync(inspector, LoginAckFrame(), ConfigFinishFrame(), plainChat);
 
-        Assert.Equal<byte>(ConfigFinishFrame(), forwarded);
+        Assert.Equal<byte>([.. LoginAckFrame(), .. ConfigFinishFrame()], forwarded);
         Assert.NotNull(disconnect);
         Assert.True(fixture.BanService.IsBanned(RemoteIp));
+    }
+
+    [Fact]
+    public async Task GraceAuth_RealisticConfigurationTraffic_BeforeFinishConfiguration_DoesNotConsumeGraceAuthEarly()
+    {
+        // Regression test for the exact bug a live end-to-end run against a real client caught: a
+        // Configuration-phase packet whose ID happens to coincide with a Play-state chat/command ID
+        // (entirely plausible — each protocol state has its own independent numbering) must NOT be
+        // treated as the player's first Play-state message, even if it arrives before Finish
+        // Configuration. Only genuine Play-state packets may ever resolve the grace-auth check.
+        var fixture = CreateFixture();
+        var entry = new IdentityEntry { Username = "Player1", PasswordHash = PasswordHasher.Hash("correctpw") };
+        var graceAuth = new GraceAuthRequirement(entry, entry.PasswordHash!);
+        var inspector = CreateInspector(fixture, "Player1", graceAuth, startsTrusted: false);
+
+        // A Configuration-phase frame using the same numeric ID as PlayChatCommandServerbound — this
+        // must be forwarded untouched, not interpreted as a grace-auth attempt.
+        byte[] configFrameSharingChatCommandId = MinecraftPacketBuilder.BuildCompressedStringPacketFrame(Ids.PlayChatCommandServerbound, "not actually a command");
+        byte[] login = CommandFrame("login correctpw");
+
+        var (forwarded, disconnect) = await RunAsync(inspector, LoginAckFrame(), configFrameSharingChatCommandId, ConfigFinishFrame(), login);
+
+        Assert.Null(disconnect);
+        Assert.True(entry.IsIpRecognized(RemoteIp)); // the REAL /login (after Finish Configuration) still succeeded
+        Assert.Equal<byte>([.. LoginAckFrame(), .. configFrameSharingChatCommandId, .. ConfigFinishFrame()], forwarded);
     }
 }
