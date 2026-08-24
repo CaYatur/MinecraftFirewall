@@ -1,4 +1,3 @@
-using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
@@ -45,13 +44,24 @@ public sealed class MojangSessionClient(
             using var response = await client.GetAsync(url, timeoutCts.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                // 204 No Content (no matching session) or any other non-success — always "not
-                // joined", never a fallback. See IPremiumSessionClient's doc comment.
                 logger.LogWarning("Mojang hasJoined check for '{Username}' returned {Status} — treating as verification failure.", username, response.StatusCode);
                 return HasJoinedResult.NotJoined;
             }
 
-            var payload = await response.Content.ReadFromJsonAsync<HasJoinedResponse>(timeoutCts.Token).ConfigureAwait(false);
+            string body = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                // The ordinary "no such session" answer, and the single most common outcome in
+                // production — every cracked client attempting a premium-locked name lands here.
+                // Verified live: Mojang answers it with HTTP 200 and an EMPTY BODY, not the 204 No
+                // Content its documentation implies. Handling it explicitly (rather than letting the
+                // JSON deserializer throw on empty input and catching that below) keeps a routine,
+                // expected denial from writing an exception stack trace into the log every time.
+                logger.LogInformation("Mojang hasJoined check for '{Username}' found no valid session — denying.", username);
+                return HasJoinedResult.NotJoined;
+            }
+
+            HasJoinedResponse? payload = JsonSerializer.Deserialize<HasJoinedResponse>(body);
             if (payload is null || !Guid.TryParse(InsertUuidDashes(payload.Id), out Guid uuid))
             {
                 logger.LogWarning("Mojang hasJoined check for '{Username}' returned an unparseable body — treating as verification failure.", username);

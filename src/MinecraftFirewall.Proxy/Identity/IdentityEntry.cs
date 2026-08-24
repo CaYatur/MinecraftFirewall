@@ -21,9 +21,14 @@ public sealed class IdentityEntry
     // Stage 3
     public string? PasswordHash { get; set; }
 
-    // Stage 4 (reserved; admin-declared only, never auto-set)
+    // Stage 4 — admin-declared only, never auto-set by observing traffic (see docs/plan.md's
+    // "explicitly rejected" note on auto-probing).
     public bool PremiumRequired { get; set; }
-    public Guid? PinnedUuid { get; set; }
+
+    /// <summary>The Mojang UUID this username is permanently locked to, recorded on the first
+    /// successful premium verification. Mutated only via <see cref="TryClaimOrMatchPinnedUuid"/> —
+    /// see there for why an ordinary setter would be a real vulnerability.</summary>
+    public Guid? PinnedUuid { get; private set; }
 
     public IReadOnlyList<LearnedIp> LearnedIps
     {
@@ -49,6 +54,32 @@ public sealed class IdentityEntry
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Claims the permanent UUID pin for this username on the first successful premium verification,
+    /// or confirms that a later verification is the same account. Returns false only when a pin is
+    /// already recorded and <paramref name="verifiedUuid"/> belongs to someone else.
+    ///
+    /// The check-and-claim must be one atomic step, which is why this is a method rather than a
+    /// public setter over a public getter. Two genuine connections for the same username can arrive
+    /// concurrently (a reconnect racing a stale session is routine); with a read-then-write from
+    /// caller code, both could observe a null pin and both write, letting the second connection's
+    /// UUID silently replace the first. That is precisely the "somebody else takes the name" outcome
+    /// this whole feature exists to prevent, so it is closed here rather than left to call sites.
+    /// </summary>
+    public bool TryClaimOrMatchPinnedUuid(Guid verifiedUuid)
+    {
+        lock (_lock)
+        {
+            if (PinnedUuid is null)
+            {
+                PinnedUuid = verifiedUuid;
+                return true;
+            }
+
+            return PinnedUuid.Value == verifiedUuid;
+        }
     }
 
     /// <summary>

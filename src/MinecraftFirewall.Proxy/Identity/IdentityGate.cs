@@ -18,6 +18,16 @@ public enum IdentityOutcome
     /// — see the comment below for why the two cases aren't treated the same way.
     /// </summary>
     AllowPendingGraceAuthentication,
+
+    /// <summary>
+    /// The username is admin-declared <c>PremiumRequired</c>: the connection must pass a real Mojang
+    /// encryption challenge + <c>hasJoined</c> session check (and match the recorded UUID pin, once
+    /// one exists) before it reaches the backend at all. Unlike
+    /// <see cref="AllowPendingGraceAuthentication"/>, nothing is forwarded on the strength of this
+    /// outcome alone — ClientConnection runs the challenge during Login, before it so much as opens a
+    /// backend connection, and a failure is always a denial with no fallback to any weaker check.
+    /// </summary>
+    PremiumVerificationRequired,
 }
 
 public sealed record IdentityDecision(IdentityOutcome Outcome, string Reason);
@@ -36,10 +46,15 @@ public static class IdentityGate
 
         if (entry.PremiumRequired)
         {
-            // Stage 4 (real Mojang encryption + hasJoined verification) isn't implemented yet.
-            // Fail closed rather than silently ignoring a premium requirement the admin declared.
-            return new IdentityDecision(IdentityOutcome.Deny,
-                "Username is marked PremiumRequired but premium verification (Stage 4) is not yet implemented.");
+            // The precedence rule, and the single most important line in this method: PremiumRequired
+            // always wins and returns immediately. Everything below — static allowlist, learned IPs,
+            // password — is deliberately never consulted for such a name, in BOTH directions. A
+            // weaker mechanism must never be able to satisfy the stronger requirement (an attacker
+            // who somehow learned the password can't bypass the Mojang check), and equally the
+            // genuine owner must never be dropped into the password path (docs/plan.md's explicit
+            // guarantee that a real premium account is never shown a password prompt, from any IP).
+            return new IdentityDecision(IdentityOutcome.PremiumVerificationRequired,
+                "Username is marked PremiumRequired — must pass Mojang session verification.");
         }
 
         bool hasAnyProtection = entry.StaticAllowlist.Count > 0 || entry.LearnedIps.Count > 0 || entry.PasswordHash is not null;

@@ -2,6 +2,7 @@ using MinecraftFirewall.Proxy;
 using MinecraftFirewall.Proxy.Admin;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity;
+using MinecraftFirewall.Proxy.Identity.Premium;
 using MinecraftFirewall.Proxy.IpIntel;
 using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
@@ -25,11 +26,19 @@ builder.Services.Configure<IdentityOptions>(builder.Configuration.GetSection(Ide
 builder.Services.Configure<DangerousCommandOptions>(builder.Configuration.GetSection(DangerousCommandOptions.SectionName));
 builder.Services.Configure<MessagesOptions>(builder.Configuration.GetSection(MessagesOptions.SectionName));
 builder.Services.Configure<IpInfoOptions>(builder.Configuration.GetSection(IpInfoOptions.SectionName));
+builder.Services.Configure<PremiumOptions>(builder.Configuration.GetSection(PremiumOptions.SectionName));
 
 builder.Services.AddHttpClient();
 
 builder.Services.AddSingleton<VpnIntelligence>();
 builder.Services.AddSingleton<IIpInfoClient, IpInfoClient>();
+
+// One RSA keypair for the whole process, generated at startup — the same thing a real Notchian
+// server does ("Generating keypair" appears once in its log, not per connection).
+builder.Services.AddSingleton<RsaServerKeyPair>();
+builder.Services.AddSingleton<IPremiumSessionClient, MojangSessionClient>();
+builder.Services.AddSingleton<PremiumVerifier>();
+builder.Services.AddSingleton<PremiumLoginHandshake>();
 builder.Services.AddSingleton<ConnectionRateLimiter>();
 builder.Services.AddSingleton<NeverBanList>();
 builder.Services.AddSingleton<IWindowsFirewallGateway, WindowsFirewallGateway>();

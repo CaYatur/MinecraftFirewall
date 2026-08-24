@@ -4,7 +4,7 @@ Windows reverse-proxy firewall for Minecraft Java Edition servers running `onlin
 protection plugins. It sits in front of the real server (which binds to `127.0.0.1` only) and decides,
 per connection, whether to forward it — without any plugin/mod inside Minecraft itself.
 
-## Status: Stage 4a of 4 (199 automated tests passing)
+## Status: all 4 stages complete (231 automated tests passing)
 
 This is an in-progress build. See [`docs/plan.md`](docs/plan.md) for the complete staged design doc and
 current status. What's implemented right now:
@@ -45,13 +45,18 @@ current status. What's implemented right now:
   can connect to (must be run elevated). Every mutating command is in-memory only and says so in its own
   output — it does not survive a service restart unless you also add it to `appsettings.json`.
 
-**Not implemented yet:** the login splice (Stage 4b) that would actually let a genuine Mojang account
-through. The verification logic itself — RSA Encryption Request/Response, Mojang `hasJoined` session
-check, session-hash computation — is built and unit-tested (`Identity/Premium/`), and its wire format
-was confirmed empirically against a real Paper server (see `docs/plan.md`'s Stage 4a note), but it is
-not wired into any connection's login flow yet. The `require-premium` CLI command above still just sets
-a flag; until Stage 4b ships, a `PremiumRequired` name is denied outright for everyone — no verification
-path is reachable yet.
+- **Premium account lock (the original strongest request)** — mark a username `"RequirePremium": true`
+  and it is permanently bound to its genuine Microsoft/Mojang account, even though the backend stays
+  `online-mode=false`. Such a connection gets a real encryption handshake (RSA + AES-CFB8) and a real
+  Mojang `hasJoined` session check during login; the first account to pass claims the name forever, and
+  every later connection must match that UUID. **The real owner is never shown a password prompt from
+  any IP** — their own launcher answers the cryptographic challenge silently. Nobody else can use the
+  name, and there is no fallback to any weaker check: if verification fails, or the feature is switched
+  off in config, the name is denied outright rather than dropping back to password/IP.
+
+**Not implemented (designed for, never built):** identity-store persistence — see the honesty note
+below, it has a real consequence for premium names; ban-expiry persistence across restarts; and Discord
+webhook alerts (everything currently goes to the log file and console).
 
 **Verified end-to-end, not just with synthetic unit tests:** the compiled service was run against a
 real local Paper server, driven through the proxy's public port by a real protocol-correct client. This
@@ -65,6 +70,20 @@ protocol-correct implementation, not a mock, but it is still this project's own 
 
 - This is defense-in-depth for a server that must stay `online-mode=false`. It does not replace Mojang
   authentication.
+- **Nothing the app learns at runtime survives a restart.** There is no on-disk identity store. That
+  means a restart drops self-registered CaYaDev-Check passwords, learned IPs, **and the UUID a premium
+  name is pinned to.** The `RequirePremium` flag itself is safe (it lives in `appsettings.json`, so the
+  name stays protected), but the specific account binding is re-claimed by whoever next passes
+  verification. In practice the real owner reclaims it the moment they reconnect — but if you are
+  relying on the pin, restart deliberately, not casually. This is the top item in `docs/plan.md`'s
+  remaining-work list.
+- **The premium *positive* path has not been verified against a real Microsoft account.** The denial
+  path is confirmed end-to-end against a live server (a cracked client is challenged, checked against
+  Mojang, denied, and receives a correctly-encrypted kick), the AES-CFB8 implementation is verified
+  against NIST SP 800-38A vectors for all three key sizes, and the logic is unit-tested — but no
+  genuine premium account was available in this build environment to confirm the "real owner is
+  admitted" half. If you own the account, test it before relying on it: mark your own username
+  `RequirePremium`, connect with a normal launcher, and confirm you get in without a prompt.
 - **Requires Administrator rights** to actually create Windows Firewall rules. Without it, bans are still
   tracked and enforced in-process (denied at the proxy), but not blocked at the OS level — the service
   logs a clear warning at startup if it can't reach the firewall.
@@ -118,6 +137,12 @@ docs/protocol/                     Sourced packet-ID reference data (Mojang's ow
    - Optional: for the real-time ipinfo.io secondary signal, sign up free at
      [ipinfo.io/signup](https://ipinfo.io/signup) and paste the token into the top-level `IpInfo`
      section. Leave it empty to keep this signal off (default) — the X4BNet lists above still apply.
+   - Optional: to lock a username to its genuine Minecraft account owner, add it to that profile's
+     `ProtectedUsernames` with `"RequirePremium": true` (no `AllowedIps` needed). This needs no API
+     key — Mojang's session endpoint is public — and is on by default; the top-level `Premium` section
+     only exists to switch the whole mechanism off, which denies such names rather than downgrading
+     them. Read the two honesty notes above about restart behaviour and the unverified positive path
+     first.
 4. Build and run:
 
 ```bash

@@ -12,7 +12,17 @@ namespace MinecraftFirewall.Proxy.Policy;
 /// that the first Play-state message is a correct /login, per IdentityGate's AllowPendingGraceAuthentication.</summary>
 public sealed record GraceAuthRequirement(IdentityEntry Entry, string PasswordHash);
 
-public sealed record PolicyDecision(bool Allow, string Reason, GraceAuthRequirement? GraceAuth = null);
+/// <summary>Carried on an Allow decision when the username is admin-declared PremiumRequired. "Allow"
+/// here means only "nothing in the IP/rate-limit/VPN layer objected" — the connection still has to
+/// pass the full Mojang encryption + hasJoined challenge in ClientConnection before it reaches the
+/// backend, and it never falls back to any weaker check if that fails.</summary>
+public sealed record PremiumRequirement(IdentityEntry Entry);
+
+public sealed record PolicyDecision(
+    bool Allow,
+    string Reason,
+    GraceAuthRequirement? GraceAuth = null,
+    PremiumRequirement? Premium = null);
 
 /// <summary>
 /// Combines identity, VPN/datacenter signal, and rate limiting into one Allow/Deny decision per
@@ -84,9 +94,12 @@ public sealed class PolicyEngine(
             return new PolicyDecision(false, $"Protected username denied: {identityDecision.Reason}");
         }
 
-        // A pending-grace-auth connection is a security-relevant identity too (it has a password),
-        // so it's treated the same as an outright-Allow for VPN/hosting-signal policy purposes.
-        bool isProtectedUsername = identityDecision.Outcome is IdentityOutcome.Allow or IdentityOutcome.AllowPendingGraceAuthentication;
+        // A pending-grace-auth or premium-challenge connection is a security-relevant identity too,
+        // so both are treated the same as an outright-Allow for VPN/hosting-signal policy purposes.
+        bool isProtectedUsername = identityDecision.Outcome
+            is IdentityOutcome.Allow
+            or IdentityOutcome.AllowPendingGraceAuthentication
+            or IdentityOutcome.PremiumVerificationRequired;
 
         bool isVpnFlagged = profile.UseDatacenterList
             ? vpnIntelligence.IsKnownVpnOrDatacenter(remoteAddress)
@@ -132,6 +145,12 @@ public sealed class PolicyEngine(
         // those near-misses toward an eventual ban. A pending grace-auth isn't "clean" yet (the
         // password hasn't been checked), so strikes are only cleared once that succeeds — see
         // ClientConnection/PlayStateInspector, which calls RegisterGraceAuthSuccess itself.
+        // Same reasoning as grace-auth below: verification hasn't happened yet, so strikes stay.
+        if (identityDecision.Outcome == IdentityOutcome.PremiumVerificationRequired)
+        {
+            return new PolicyDecision(true, identityDecision.Reason, Premium: new PremiumRequirement(entry!));
+        }
+
         if (identityDecision.Outcome == IdentityOutcome.AllowPendingGraceAuthentication)
         {
             return new PolicyDecision(true, identityDecision.Reason, new GraceAuthRequirement(entry!, entry!.PasswordHash!));
@@ -152,6 +171,33 @@ public sealed class PolicyEngine(
         RegisterStrikeAndMaybeBan(remoteAddress,
             $"[{profileName}] grace-authentication failed for registered username '{username}'",
             weight: _banOptions.StrikesBeforeBan);
+    }
+
+    /// <summary>Called by ClientConnection when a PremiumRequired username passes the full Mojang
+    /// challenge — the strongest possible proof of identity this proxy can obtain, so it clears any
+    /// strikes the same way a clean allowlisted login does.</summary>
+    public void RegisterPremiumVerificationSuccess(IPAddress remoteAddress) => strikeTracker.Reset(remoteAddress);
+
+    /// <summary>
+    /// Called by ClientConnection when a PremiumRequired username fails verification.
+    ///
+    /// Deliberately NOT fast-tracked in the ordinary case, unlike a grace-authentication failure. A
+    /// wrong password is unambiguous; a failed hasJoined check is not — a genuine owner caught by a
+    /// Mojang session-API outage produces byte-for-byte the same failure as a cracked client, and
+    /// this proxy cannot tell them apart. A normal-weight strike still bans an attacker who keeps
+    /// hammering the name, while a single outage-time failure costs the real owner one strike rather
+    /// than immediate machine-wide banishment.
+    ///
+    /// <paramref name="pinnedToDifferentAccount"/> is the one case that IS unambiguous and is
+    /// fast-tracked: someone passed Mojang's check as a real, different account and tried to take a
+    /// name already pinned to someone else. That is a deliberate impersonation attempt with genuine
+    /// credentials, not an outage.
+    /// </summary>
+    public void RegisterPremiumVerificationFailure(IPAddress remoteAddress, string profileName, string username, string reason, bool pinnedToDifferentAccount)
+    {
+        RegisterStrikeAndMaybeBan(remoteAddress,
+            $"[{profileName}] premium verification failed for '{username}': {reason}",
+            weight: pinnedToDifferentAccount ? _banOptions.StrikesBeforeBan : 1);
     }
 
     /// <summary>Called by PlayStateInspector when a non-trusted connection issues a dangerous command —

@@ -2,9 +2,24 @@ using System.Security.Cryptography;
 
 namespace MinecraftFirewall.Proxy.Identity.Premium;
 
-public sealed record PremiumVerificationResult(bool Success, Guid Uuid, string Username, string FailureReason)
+/// <param name="SharedSecret">
+/// Non-null whenever the crypto half of the handshake completed — i.e. the shared secret decrypted
+/// and the verify token round-tripped — even if verification then failed at the Mojang session
+/// check. That distinction matters on the failure path: by the time a client has sent its Encryption
+/// Response it has already switched its own cipher on, so a plaintext kick would reach it as noise.
+/// Having the secret here is what lets ClientConnection send a *readable* kick to a real client that
+/// simply failed verification, while a client whose crypto never validated (no secret) just gets the
+/// socket closed — there is nothing meaningful that could be sent to it anyway.
+/// </param>
+public sealed record PremiumVerificationResult(
+    bool Success,
+    Guid Uuid,
+    string Username,
+    string FailureReason,
+    byte[]? SharedSecret)
 {
-    public static PremiumVerificationResult Fail(string reason) => new(false, Guid.Empty, "", reason);
+    public static PremiumVerificationResult Fail(string reason, byte[]? sharedSecret = null) =>
+        new(false, Guid.Empty, "", reason, sharedSecret);
 }
 
 /// <summary>
@@ -40,6 +55,9 @@ public sealed class PremiumVerifier(IPremiumSessionClient sessionClient, ILogger
 
         if (!CryptographicOperations.FixedTimeEquals(decryptedVerifyToken, expectedVerifyToken))
         {
+            // Deliberately no shared secret returned here: the token not matching means this side and
+            // the client never actually agreed on a key, so encrypting a kick with it would produce
+            // noise rather than a readable message.
             logger.LogWarning("Premium verification for '{Username}' failed: verify token mismatch.", username);
             return PremiumVerificationResult.Fail("Verify token mismatch.");
         }
@@ -50,10 +68,10 @@ public sealed class PremiumVerifier(IPremiumSessionClient sessionClient, ILogger
         if (!joined.Success)
         {
             logger.LogWarning("Premium verification for '{Username}' failed: Mojang hasJoined check did not confirm a valid session.", username);
-            return PremiumVerificationResult.Fail("Mojang session check failed.");
+            return PremiumVerificationResult.Fail("Mojang session check failed.", sharedSecret);
         }
 
         logger.LogInformation("Premium verification for '{Username}' succeeded — verified UUID {Uuid}.", username, joined.Uuid);
-        return new PremiumVerificationResult(true, joined.Uuid, joined.Name, "");
+        return new PremiumVerificationResult(true, joined.Uuid, joined.Name, "", sharedSecret);
     }
 }

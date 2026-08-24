@@ -1,5 +1,6 @@
 using MinecraftFirewall.Proxy;
 using MinecraftFirewall.Proxy.Enforcement;
+using MinecraftFirewall.Proxy.Identity.Premium;
 using MinecraftFirewall.Proxy.IpIntel;
 using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.RateLimiting;
@@ -74,6 +75,33 @@ public class AppSettingsJsonBindingTests
         Assert.NotNull(config.GetSection(NeverBanOptions.SectionName).Get<NeverBanOptions>());
         Assert.NotNull(config.GetSection(MessagesOptions.SectionName).Get<MessagesOptions>());
         Assert.NotNull(config.GetSection(IpInfoOptions.SectionName).Get<IpInfoOptions>());
+        Assert.NotNull(config.GetSection(PremiumOptions.SectionName).Get<PremiumOptions>());
+    }
+
+    [Fact]
+    public void AppSettingsJson_PremiumSection_ShipsEnabled()
+    {
+        // Unlike IpInfo, premium verification needs no account or token of its own — Mojang's
+        // hasJoined endpoint is public — so it ships on. It only ever does anything for a username
+        // an admin explicitly marked RequirePremium, and there are none in the shipped profiles.
+        var config = LoadConfiguration();
+        var premium = config.GetSection(PremiumOptions.SectionName).Get<PremiumOptions>();
+
+        Assert.NotNull(premium);
+        Assert.True(premium!.Enabled);
+    }
+
+    [Fact]
+    public void AppSettingsJson_MessagesSection_DeclaresEveryMessageTheCodeDefines()
+    {
+        // The shipped file spells out all messages rather than relying on code defaults, so a newly
+        // added message that nobody remembered to add here would leave operators unable to find and
+        // translate it. This catches that at build time instead.
+        var config = LoadConfiguration();
+        var declaredKeys = config.GetSection(MessagesOptions.SectionName).GetChildren().Select(c => c.Key).ToHashSet();
+        var codeProperties = typeof(MessagesOptions).GetProperties().Select(p => p.Name);
+
+        Assert.All(codeProperties, name => Assert.Contains(name, declaredKeys));
     }
 
     [Fact]

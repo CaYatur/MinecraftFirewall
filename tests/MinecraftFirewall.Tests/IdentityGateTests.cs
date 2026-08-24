@@ -61,16 +61,35 @@ public class IdentityGateTests
     }
 
     [Fact]
-    public void Evaluate_PremiumRequired_AlwaysDeniesInStage1_RegardlessOfAllowlist()
+    public void Evaluate_PremiumRequired_TakesPrecedenceOverAnAllowlistThatWouldOtherwiseAllow()
     {
-        // PremiumRequired (Stage 4) must take precedence over the IP allowlist and, since Stage 4
-        // isn't implemented yet, fail closed rather than silently falling back to the weaker check.
+        // An allowlist wide enough to match anything must still not satisfy a premium-declared name:
+        // the Mojang challenge is the only thing that can.
         var entry = new IdentityEntry { Username = "Admin", PremiumRequired = true };
         entry.StaticAllowlist.Add(CidrRange.Parse("0.0.0.0/0"));
 
         var decision = IdentityGate.Evaluate(entry, IPAddress.Parse("203.0.113.1"));
 
-        Assert.Equal(IdentityOutcome.Deny, decision.Outcome);
+        Assert.Equal(IdentityOutcome.PremiumVerificationRequired, decision.Outcome);
+    }
+
+    [Fact]
+    public void Evaluate_PremiumRequired_WithPasswordAndMatchingLearnedIp_StillRequiresPremiumVerification()
+    {
+        // The precedence guarantee in its strongest form, and the one a refactor of Evaluate would
+        // silently break: this entry satisfies EVERY weaker check at once — a password is set, and
+        // the connecting IP is a currently-valid learned IP. Falling through to any of them would
+        // both let an attacker who obtained the password bypass the Mojang gate, and (in the other
+        // direction) risk prompting the genuine owner for a password, which docs/plan.md explicitly
+        // guarantees never happens for a premium name.
+        var ip = IPAddress.Parse("203.0.113.55");
+        var entry = new IdentityEntry { Username = "Admin", PremiumRequired = true, PasswordHash = "hash" };
+        entry.StaticAllowlist.Add(CidrRange.Parse("203.0.113.55/32"));
+        entry.LearnIp(ip, TimeSpan.FromDays(30), maxLearnedIps: 10);
+
+        var decision = IdentityGate.Evaluate(entry, ip);
+
+        Assert.Equal(IdentityOutcome.PremiumVerificationRequired, decision.Outcome);
     }
 
     [Fact]

@@ -30,4 +30,11 @@ public sealed class MessagesOptions
     /// password, or the first message wasn't a /login command at all).</summary>
     public string GraceAuthenticationFailed { get; set; } =
         "Authentication failed. This IP is not recognized and the correct password was not provided.";
+
+    /// <summary>Sent when a username marked PremiumRequired fails Mojang session verification — a
+    /// cracked/offline client, a failed hasJoined check, or a UUID that doesn't match the one this
+    /// name is pinned to. Worded for the case that actually reaches a human: the genuine owner
+    /// hitting a Mojang outage, since anyone else has no legitimate reason to be here.</summary>
+    public string PremiumVerificationFailed { get; set; } =
+        "This username is reserved for its verified Minecraft account owner. Sign in with the genuine account and try again.";
 }

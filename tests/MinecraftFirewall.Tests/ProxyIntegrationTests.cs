@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using MinecraftFirewall.Proxy;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity;
+using MinecraftFirewall.Proxy.Identity.Premium;
 using MinecraftFirewall.Proxy.IpIntel;
 using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
@@ -32,6 +33,7 @@ public class ProxyIntegrationTests : IAsyncLifetime
     private PolicyEngine _policyEngine = null!;
     private CancellationTokenSource _listenersCts = null!;
     private FirewallBanService _banService = null!;
+    private RsaServerKeyPair _serverKey = null!;
 
     public async Task InitializeAsync()
     {
@@ -67,9 +69,12 @@ public class ProxyIntegrationTests : IAsyncLifetime
         var dangerousCommands = new DangerousCommandOptions().Commands;
         var messages = new MessagesOptions();
 
+        _serverKey = new RsaServerKeyPair();
+        var premiumHandshake = PremiumTestFactory.CreateHandshake(_serverKey);
+
         _listenersCts = new CancellationTokenSource();
-        var listenerA = new ProxyListener(_profileA, _policyEngine, identityOptions, dangerousCommands, messages, NullLogger.Instance);
-        var listenerB = new ProxyListener(_profileB, _policyEngine, identityOptions, dangerousCommands, messages, NullLogger.Instance);
+        var listenerA = new ProxyListener(_profileA, _policyEngine, identityOptions, dangerousCommands, messages, premiumHandshake, NullLogger.Instance);
+        var listenerB = new ProxyListener(_profileB, _policyEngine, identityOptions, dangerousCommands, messages, premiumHandshake, NullLogger.Instance);
         _ = listenerA.RunAsync(_listenersCts.Token);
         _ = listenerB.RunAsync(_listenersCts.Token);
 
@@ -80,6 +85,7 @@ public class ProxyIntegrationTests : IAsyncLifetime
     {
         await _listenersCts.CancelAsync();
         _banService.Dispose();
+        _serverKey.Dispose();
         await _backendA.DisposeAsync();
         await _backendB.DisposeAsync();
     }

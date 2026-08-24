@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using MinecraftFirewall.Proxy.Identity;
+using MinecraftFirewall.Proxy.Identity.Premium;
 using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
 using MinecraftFirewall.Proxy.Protocol;
@@ -15,6 +16,15 @@ namespace MinecraftFirewall.Proxy;
 /// the client-to-backend direction runs through PlayStateInspector (command auditing, CaYaDev-Check);
 /// otherwise it's a plain byte pump exactly like Stage 1, since inspecting an unverified version's
 /// packets would mean guessing IDs — never done here.
+///
+/// A username the admin declared PremiumRequired takes one extra step first (Stage 4): before any
+/// backend connection is opened, this runs a real Mojang encryption challenge against the client
+/// (PremiumLoginHandshake) and, on success, wraps the client-side stream in an AesCfb8Stream.
+/// Everything downstream then behaves identically to a normal connection — which is the whole point
+/// of doing it that way. The proxy owns only the Encryption Request/Response exchange; the backend's
+/// own Set Compression and Login Success are forwarded through the cipher verbatim, and they are
+/// exactly what a client expects to receive after it sends an Encryption Response, so no packet ever
+/// has to be re-framed and both sides land on the same compression threshold for free.
 /// </summary>
 public static class ClientConnection
 {
@@ -28,6 +38,7 @@ public static class ClientConnection
         IdentityOptions identityOptions,
         IReadOnlyCollection<string> dangerousCommands,
         MessagesOptions messages,
+        PremiumLoginHandshake premiumHandshake,
         ILogger logger,
         CancellationToken hostShutdown)
     {
@@ -82,7 +93,7 @@ public static class ClientConnection
         }
 
         await HandleLoginAsync(client, clientStream, handshakeFrame, handshake, profile, remoteAddress,
-            policyEngine, identityOptions, dangerousCommands, messages, logger, preLoginCts, hostShutdown).ConfigureAwait(false);
+            policyEngine, identityOptions, dangerousCommands, messages, premiumHandshake, logger, preLoginCts, hostShutdown).ConfigureAwait(false);
     }
 
     private static async Task HandleStatusAsync(TcpClient client, NetworkStream clientStream, Frame handshakeFrame,
@@ -106,7 +117,8 @@ public static class ClientConnection
 
     private static async Task HandleLoginAsync(TcpClient client, NetworkStream clientStream, Frame handshakeFrame, HandshakeInfo handshake,
         ServerProfile profile, IPAddress remoteAddress, PolicyEngine policyEngine, IdentityOptions identityOptions,
-        IReadOnlyCollection<string> dangerousCommands, MessagesOptions messages, ILogger logger, CancellationTokenSource preLoginCts, CancellationToken hostShutdown)
+        IReadOnlyCollection<string> dangerousCommands, MessagesOptions messages, PremiumLoginHandshake premiumHandshake,
+        ILogger logger, CancellationTokenSource preLoginCts, CancellationToken hostShutdown)
     {
         Frame loginStartFrame;
         string username;
@@ -148,29 +160,121 @@ public static class ClientConnection
             return;
         }
 
-        var (backendClient, backendStream) = await TryConnectBackendAsync(profile, logger, hostShutdown).ConfigureAwait(false);
-        if (backendClient is null || backendStream is null)
-            return;
+        // Everything below reads and writes the client through `clientIo`, which for a verified
+        // premium connection is the cipher wrapper rather than the bare socket stream.
+        Stream clientIo = clientStream;
+        AesCfb8Stream? cipherStream = null;
 
-        using var _ = backendClient;
-        logger.LogInformation("[{Profile}] login allowed for '{Username}' from {Ip}.", profile.Name, username, remoteAddress);
-
-        await backendStream.WriteAsync(handshakeFrame.Raw, hostShutdown).ConfigureAwait(false);
-        await backendStream.WriteAsync(loginStartFrame.Raw, hostShutdown).ConfigureAwait(false);
-
-        if (hasPacketIds)
+        try
         {
-            var inspector = new PlayStateInspector(
-                profile, username, remoteAddress, packetIds, decision.GraceAuth,
-                startsTrusted: decision.GraceAuth is null,
-                identityOptions, dangerousCommands, messages, policyEngine, logger);
+            if (decision.Premium is not null)
+            {
+                cipherStream = await RunPremiumChallengeAsync(client, clientStream, decision.Premium, profile, remoteAddress,
+                    username, handshake.ProtocolVersion, hasPacketIds, policyEngine, messages, premiumHandshake, logger, hostShutdown).ConfigureAwait(false);
 
-            await PumpWithInspectionAsync(client, clientStream, backendStream, inspector, packetIds, hostShutdown).ConfigureAwait(false);
+                if (cipherStream is null)
+                    return; // denied — RunPremiumChallengeAsync already logged, kicked, and struck
+
+                clientIo = cipherStream;
+            }
+
+            var (backendClient, backendStream) = await TryConnectBackendAsync(profile, logger, hostShutdown).ConfigureAwait(false);
+            if (backendClient is null || backendStream is null)
+                return;
+
+            using var _ = backendClient;
+            logger.LogInformation("[{Profile}] login allowed for '{Username}' from {Ip}.", profile.Name, username, remoteAddress);
+
+            await backendStream.WriteAsync(handshakeFrame.Raw, hostShutdown).ConfigureAwait(false);
+            await backendStream.WriteAsync(loginStartFrame.Raw, hostShutdown).ConfigureAwait(false);
+
+            if (hasPacketIds)
+            {
+                var inspector = new PlayStateInspector(
+                    profile, username, remoteAddress, packetIds, decision.GraceAuth,
+                    startsTrusted: decision.GraceAuth is null,
+                    identityOptions, dangerousCommands, messages, policyEngine, logger);
+
+                await PumpWithInspectionAsync(client, clientIo, backendStream, inspector, packetIds, hostShutdown).ConfigureAwait(false);
+            }
+            else
+            {
+                await PumpBothWaysAsync(clientIo, backendStream, hostShutdown).ConfigureAwait(false);
+            }
         }
-        else
+        finally
         {
-            await PumpBothWaysAsync(clientStream, backendStream, hostShutdown).ConfigureAwait(false);
+            // leaveInnerOpen: true, so this releases the cipher state only — the socket's lifetime
+            // still belongs to the caller's `using` on the TcpClient.
+            cipherStream?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Runs the Stage 4 Mojang encryption challenge for a PremiumRequired username. Returns the
+    /// cipher-wrapped client stream on success, or null if the connection was denied (in which case
+    /// it has already kicked the client where possible, logged, and registered a strike).
+    /// </summary>
+    private static async Task<AesCfb8Stream?> RunPremiumChallengeAsync(
+        TcpClient client, NetworkStream clientStream, PremiumRequirement premium, ServerProfile profile,
+        IPAddress remoteAddress, string username, int protocolVersion, bool hasPacketIds, PolicyEngine policyEngine,
+        MessagesOptions messages, PremiumLoginHandshake premiumHandshake, ILogger logger, CancellationToken hostShutdown)
+    {
+        if (!premiumHandshake.Enabled)
+        {
+            // Fails closed on purpose — see PremiumOptions.Enabled. Disabling the feature must never
+            // downgrade a premium-declared name to the weaker password/IP checks.
+            logger.LogWarning("[{Profile}] '{Username}' is PremiumRequired but premium verification is disabled in config — denying.", profile.Name, username);
+            await TrySendDisconnectAsync(client, clientStream, messages.PremiumVerificationFailed, hostShutdown).ConfigureAwait(false);
+            return null;
+        }
+
+        if (!hasPacketIds)
+        {
+            // The Encryption Request layout was only verified against protocol versions in
+            // ProtocolVersionRegistry (notably its trailing "Should Authenticate" boolean, which
+            // older versions don't have). Sending a guessed layout to an unverified client version
+            // would corrupt its login, so this fails closed exactly like the grace-auth gate above.
+            logger.LogWarning("[{Profile}] '{Username}' is PremiumRequired but protocol version {Version} has no verified packet table — denying.",
+                profile.Name, username, protocolVersion);
+            await TrySendDisconnectAsync(client, clientStream, messages.UnsupportedClientVersion, hostShutdown).ConfigureAwait(false);
+            return null;
+        }
+
+        PremiumLoginOutcome outcome;
+        try
+        {
+            outcome = await premiumHandshake.RunAsync(clientStream, premium.Entry, username, hostShutdown).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException)
+        {
+            logger.LogDebug("[{Profile}] '{Username}' dropped during the premium encryption challenge: {Message}", profile.Name, username, ex.Message);
+            return null;
+        }
+
+        if (outcome.Success)
+        {
+            logger.LogInformation("[{Profile}] premium verification passed for '{Username}' from {Ip}.", profile.Name, username, remoteAddress);
+            policyEngine.RegisterPremiumVerificationSuccess(remoteAddress);
+            return new AesCfb8Stream(clientStream, outcome.SharedSecret!, leaveInnerOpen: true);
+        }
+
+        logger.LogWarning("[{Profile}] premium verification FAILED for '{Username}' from {Ip}: {Reason}",
+            profile.Name, username, remoteAddress, outcome.FailureReason);
+        policyEngine.RegisterPremiumVerificationFailure(remoteAddress, profile.Name, username, outcome.FailureReason, outcome.PinnedToDifferentAccount);
+
+        if (outcome.SharedSecret is not null)
+        {
+            // The client completed the crypto handshake, so it has already switched its own cipher
+            // on — a plaintext kick would reach it as noise. Send the disconnect through the very
+            // same cipher instead, uncompressed, since no Set Compression was ever exchanged.
+            using var encrypted = new AesCfb8Stream(clientStream, outcome.SharedSecret, leaveInnerOpen: true);
+            await TrySendDisconnectAsync(client, encrypted, messages.PremiumVerificationFailed, hostShutdown).ConfigureAwait(false);
+        }
+        // Otherwise the crypto never validated, so there is no key the client would accept a message
+        // under — closing the socket is the only honest option.
+
+        return null;
     }
 
     private static async Task<(TcpClient? Client, NetworkStream? Stream)> TryConnectBackendAsync(
@@ -194,7 +298,7 @@ public static class ClientConnection
         }
     }
 
-    private static async Task TrySendDisconnectAsync(TcpClient client, NetworkStream clientStream, string reason, CancellationToken ct)
+    private static async Task TrySendDisconnectAsync(TcpClient client, Stream clientStream, string reason, CancellationToken ct)
     {
         try
         {
@@ -215,7 +319,7 @@ public static class ClientConnection
         }
     }
 
-    private static async Task TrySendPlayDisconnectAsync(TcpClient client, NetworkStream clientStream, int playDisconnectPacketId, string reason, CancellationToken ct)
+    private static async Task TrySendPlayDisconnectAsync(TcpClient client, Stream clientStream, int playDisconnectPacketId, string reason, CancellationToken ct)
     {
         try
         {
@@ -231,7 +335,7 @@ public static class ClientConnection
         }
     }
 
-    private static async Task PumpBothWaysAsync(NetworkStream clientStream, NetworkStream backendStream, CancellationToken hostShutdown)
+    private static async Task PumpBothWaysAsync(Stream clientStream, Stream backendStream, CancellationToken hostShutdown)
     {
         using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(hostShutdown);
 
@@ -251,7 +355,7 @@ public static class ClientConnection
         }
     }
 
-    private static async Task PumpWithInspectionAsync(TcpClient client, NetworkStream clientStream, NetworkStream backendStream,
+    private static async Task PumpWithInspectionAsync(TcpClient client, Stream clientStream, Stream backendStream,
         PlayStateInspector inspector, PlayStatePacketIds packetIds, CancellationToken hostShutdown)
     {
         using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(hostShutdown);
@@ -278,7 +382,7 @@ public static class ClientConnection
         }
     }
 
-    private static async Task RunInspectorAsync(PlayStateInspector inspector, NetworkStream clientStream, NetworkStream backendStream, CancellationTokenSource pumpCts)
+    private static async Task RunInspectorAsync(PlayStateInspector inspector, Stream clientStream, Stream backendStream, CancellationTokenSource pumpCts)
     {
         try
         {
@@ -294,7 +398,7 @@ public static class ClientConnection
         }
     }
 
-    private static async Task PumpAsync(NetworkStream source, NetworkStream destination, CancellationTokenSource pumpCts)
+    private static async Task PumpAsync(Stream source, Stream destination, CancellationTokenSource pumpCts)
     {
         try
         {

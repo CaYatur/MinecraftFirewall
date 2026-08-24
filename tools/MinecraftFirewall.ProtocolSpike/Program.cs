@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using MinecraftFirewall.Proxy.Identity.Premium;
 using MinecraftFirewall.Proxy.Protocol;
 
 // Stage 2 empirical spike: connect to a real local server exactly like the proxy would forward a
@@ -405,17 +406,31 @@ static async Task RunEncryptionProbeAsync(NetworkStream stream, CancellationToke
     Console.WriteLine("[encryption-probe]   - \"Failed to verify username!\" (or similar auth-specific failure) => this Response layout is CORRECT (server decrypted fine, only the Mojang session check failed, as expected for a fake account).");
     Console.WriteLine("[encryption-probe]   - A decrypt/packet/framing exception instead => this Response layout is WRONG.");
 
-    // Best-effort: try to read whatever the server sends next. Once it processes our Encryption
-    // Response, its side of the stream becomes AES-CFB8 encrypted — this tool doesn't implement that
-    // cipher, so this will very likely fail to parse as a valid frame. That failure is expected and
-    // not itself meaningful; the server-side log message above is the real signal.
+    // From here the connection is AES-CFB8 encrypted in both directions, keyed by the shared secret
+    // above — so read the rest through the proxy's own AesCfb8Stream, exactly as a real client's
+    // cipher would. Against the real Paper backend this yields nothing readable (it kicks at the
+    // Mojang session check and closes). Against THIS PROXY it's the real payoff: a
+    // PremiumRequired username's denial must arrive as a properly encrypted Login Disconnect, and
+    // this is the only way to confirm the client could actually read it rather than getting noise.
+    await using var encrypted = new AesCfb8Stream(stream, sharedSecret, leaveInnerOpen: true);
     try
     {
-        Frame next = await FrameReader.ReadFrameAsync(stream, maxFrameSize: 64 * 1024, ct);
-        Console.WriteLine($"[encryption-probe] Received {next.Raw.Length} more bytes after Encryption Response (likely encrypted — not decoded by this tool): {ToHex(next.Payload)}");
+        Frame next = await FrameReader.ReadFrameAsync(encrypted, maxFrameSize: 64 * 1024, ct);
+        ReadOnlySpan<byte> decrypted = next.Payload;
+        int nextId = VarInt.Decode(decrypted, out int nextIdLen);
+
+        if (nextId == 0x00)
+        {
+            string json = MinecraftPrimitives.ReadString(decrypted[nextIdLen..], out _);
+            Console.WriteLine($"[encryption-probe] ENCRYPTED LOGIN DISCONNECT decrypted and parsed successfully. Message JSON: {json}");
+        }
+        else
+        {
+            Console.WriteLine($"[encryption-probe] Decrypted a post-encryption frame: packetId=0x{nextId:X2} payload={ToHex(decrypted)}");
+        }
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"[encryption-probe] (expected) could not parse a further frame — connection is encrypted from here, this tool doesn't implement AES-CFB8: {ex.GetType().Name}: {ex.Message}");
+        Console.WriteLine($"[encryption-probe] No readable frame after Encryption Response ({ex.GetType().Name}: {ex.Message}). Expected against a real online-mode backend, which just closes; NOT expected against this proxy, which should send an encrypted kick.");
     }
 }

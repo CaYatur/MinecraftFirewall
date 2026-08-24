@@ -65,7 +65,66 @@
     spike client is a real, protocol-correct implementation, not a mock, but it is still this
     project's own code. A real launcher/client run remains a reasonable follow-up if anyone wants
     additional confidence before relying on this in production.
-- **Stage 4a (the verifier) — done, deliberately unwired. Stage 4b (the login splice) — not started.**
+- **Stage 4b (the login splice) — done. Premium verification is live and wired end-to-end.** A
+  username marked `RequirePremium` is now challenged with a real Mojang encryption handshake during
+  Login, before any backend connection is opened, and the first account to pass owns the name
+  permanently.
+  - **The splice turned out to be far smaller than this plan assumed, and the divergence is
+    deliberate.** The Stage 4 section below still describes the proxy *terminating* the client's
+    Login sequence — owning Login Success and the UUID in it, then opening its own separate login to
+    the backend. That is not what was built, and a future reader should not "finish" it. The proxy
+    owns only the Encryption Request/Response exchange. After that, the backend's own Set Compression
+    and Login Success are forwarded through the cipher **verbatim** — which is exactly what a client
+    expects to receive once it has sent an Encryption Response, so nothing needs re-framing, and both
+    sides inherit the same compression threshold for free. The whole of 4b therefore reduces to
+    "wrap the client stream in an `AesCfb8Stream`, then run the existing relay unchanged", rather
+    than a second parallel relay implementation. Forwarding the backend's Login Success verbatim also
+    means the client and backend agree on one UUID (the backend's offline one), which is both simpler
+    and exactly what the honesty note below already promised: the proxy's verification is
+    authoritative for *access control*, not for what the backend stores. The real Mojang UUID is used
+    only for the pin check.
+  - **`Identity/Premium/Cfb8Cipher.cs` + `AesCfb8Stream.cs`** — AES-CFB8, hand-rolled. .NET's own
+    `CipherMode.CFB` + `FeedbackSize = 8` was tried first and empirically rejected: it refuses
+    non-block-aligned input outright ("TransformBlock may only process bytes in block sized
+    increments"), which is unusable for a byte-stream cipher fed by arbitrary socket reads. Verified
+    against NIST SP 800-38A's published CFB8 vectors for **all three** key sizes (AES-128/192/256)
+    rather than a round-trip, because a CFB8 implementation that shifts the wrong byte into the
+    feedback register still round-trips perfectly against itself. The two directions get completely
+    independent cipher state — they run on separate tasks concurrently in ClientConnection's relay,
+    and sharing one IV buffer would produce intermittent corruption presenting as a framing bug.
+  - **The UUID pin is claimed atomically** (`IdentityEntry.TryClaimOrMatchPinnedUuid`, guarded by the
+    entry's existing lock, `PinnedUuid` now private-set). With a read-then-write from caller code,
+    two concurrent connections could both observe a null pin and both write, letting the second
+    silently take a name the first just claimed — precisely the "somebody else takes the name"
+    outcome the feature exists to prevent. Covered by a 200-iteration concurrent-claim test.
+  - **Failure handling is asymmetric on purpose.** A failed `hasJoined` is *not* fast-tracked toward a
+    ban: a genuine owner caught by a Mojang outage produces a byte-for-byte identical failure to a
+    cracked client, and this proxy cannot tell them apart, so it takes a normal-weight strike (an
+    attacker hammering the name still gets banned; one outage doesn't banish the real owner). A UUID
+    **pin mismatch** *is* fast-tracked — that one is unambiguous, since it means someone passed
+    Mojang's check as a real but different account and tried to take a name already pinned.
+  - **The deny path sends an encrypted kick.** By the time a client has sent its Encryption Response
+    it has already switched its own cipher on, so a plaintext disconnect would reach it as noise.
+    `PremiumVerificationResult` therefore carries the shared secret even on failure — but only when
+    the crypto half actually validated. If RSA decryption or the verify token failed there is no
+    agreed key, nothing readable could be sent, and the socket is simply closed.
+  - **Live end-to-end verified (negative path).** `ProtocolSpike`'s `encryption-probe` was pointed at
+    the *proxy* with a `RequirePremium` username configured. Confirmed live: the proxy sends an
+    Encryption Request a real client parses correctly (byte-structurally identical to real Paper's —
+    empty Server ID, 162-byte key, 4-byte token, `Should Authenticate` = 1), accepts a genuine RSA
+    Encryption Response, calls Mojang's real session server, denies, and sends an **AES-CFB8-encrypted
+    Login Disconnect that the client decrypted and parsed to exactly the configured message text**.
+    A normal non-premium login was re-run in the same session as a regression check on the
+    `NetworkStream`→`Stream` refactor and relayed 7920 real Play-state frames plus a working
+    CaYaDev-Check `/register`. **Still unverified: the positive path** — that a *genuine* premium
+    account is admitted — which needs a real Microsoft account this environment doesn't have.
+  - **A real bug the live run found, that no unit test would have.** Mojang's session server answers
+    "no such session" with **HTTP 200 and an empty body**, not the 204 No Content its documentation
+    implies. The fail-closed handling was already correct (the JSON exception was caught and became a
+    denial), but it meant the single most common outcome in production — every cracked client
+    attempting a premium-locked name — wrote a full exception stack trace to the log. Now handled
+    explicitly, with a test pinning the real observed behavior.
+- **Stage 4a (the verifier) — done.**
   Per an advisor consultation before starting: build Stage 4 in two commits, a pure-logic verifier
   first (no sockets, fully unit-testable), then the login splice separately, since the splice is real
   new production risk (a framing bug there breaks connections, not just kicks) that deserves its own
@@ -128,13 +187,9 @@
     `MojangSessionClient`'s doc comment. What this check could *not* settle: real behavior on
     Mojang's actual session server for a genuine positive-path login, since that needs a real
     Microsoft account. Revisit if one becomes available for a live Stage 4b test.
-  - **Deliberately not wired into `IdentityGate`/`ClientConnection` yet.** `IdentityGate`'s existing
-    fail-closed `Deny` for `PremiumRequired` names (see Stage 3 above) is untouched — a `PremiumRequired`
-    name is still denied outright for everyone, exactly as before. Wiring the verifier in requires the
-    login splice (Stage 4b): the proxy has to actually own the client's encrypted Login sequence to
-    ever get an Encryption Response to hand this verifier, which doesn't exist yet. Leaving the
-    verifier connected to nothing rather than half-wired avoids a state where a `PremiumRequired`
-    name silently behaves differently depending on how far a refactor got.
+  - **Was deliberately left unwired when first committed** (`IdentityGate` still denied every
+    `PremiumRequired` name outright), so that a premium name could never half-work depending on how
+    far a refactor had got. Stage 4b above then wired it in as its own separate change.
 - **Admin CLI / named pipe — done (Task #18).** `Admin/AdminProtocol.cs` (a tiny newline-delimited-JSON
   request/response contract), `Admin/AdminCommandHandler.cs` (the actual command logic, unit-testable
   without a real pipe), `Admin/AdminPipeServer.cs` (the transport — a `BackgroundService` hosting a
@@ -212,21 +267,29 @@
   the primary X4BNet list is checked first, skipping the ipinfo call entirely when it already decided
   the outcome.
 
-**Next session should start with:** Stage 4b — the login splice. Stage 4a (the verifier — RSA keypair,
-Encryption Request/Response, shared-secret decrypt + verify-token check, session hash, `hasJoined` call)
-is done and unit-tested, its field layout empirically confirmed live against a real Paper 1.21.11 server
-(see the Stage 4a entry above), but it is not wired into anything yet — `IdentityGate` still denies every
-`PremiumRequired` name outright. Stage 4b is the largest single remaining piece of work in this project:
-the proxy has to actually terminate the client's Login sequence itself (send the real Encryption Request,
-receive the real Encryption Response, hand it to `PremiumVerifier`), then open a *separate*, plaintext,
-offline-mode login to the backend as a normal client would — from that point the client side of the
-connection is AES-CFB8 encrypted while the backend side stays plaintext, so `PlayStateInspector` needs a
-decrypt/encrypt shim for these specific connections, not just frame reads. This is real new risk (a
-framing bug here breaks connections outright, not just kicks — unlike Stage 4a, which fails safely by
-construction), so plan a second live end-to-end pass before calling it done, the same way the Stage 3
-kick path was verified live this session. A real premium Microsoft/Mojang account is needed for a true
-positive-path live test; without one, the negative path (a cracked client denied) can still be verified
-the same way Stage 4a's field layout was — see the `encryption-probe` mode's approach.
+**All four planned stages are now complete.** What remains is not stage work — it is three gaps that
+were designed for in this document but never built, plus one honest verification limit:
+
+1. **Identity-store persistence** (named in the "Project structure" section below as "persisted across
+   restarts", never implemented). `IdentityStore` is in-memory only. This now matters more than it did
+   before Stage 4: **an unpersisted `PinnedUuid` means a service restart un-claims every premium name**,
+   so the next connection to pass verification — anyone, not necessarily the original owner — claims it
+   again. `RequirePremium` itself survives a restart (it's in `appsettings.json`), so the name stays
+   *protected*; it is the specific account binding that is lost. Self-registered CaYaDev-Check
+   passwords and learned IPs are lost on restart for the same reason. **This is the highest-value
+   remaining item.**
+2. **Ban-expiry persistence.** `FirewallBanService._activeBans` is in-memory, so a restart while an IP
+   has a live Windows Firewall block rule loses that ban's expiry — the OS rule keeps blocking (no
+   security regression) but nothing will ever clean it up. Pre-existing since Stage 1; already spun
+   off as its own background task.
+3. **Discord alerts** (`Alerts/DiscordAlertSender.cs` in the structure below) — never built. Everything
+   currently goes to the log file and console only.
+4. **The premium positive path has not been verified live.** The negative path is confirmed
+   end-to-end (see Stage 4b above), but confirming that a *genuine* premium account is actually
+   admitted needs a real Microsoft/Mojang account, which this build environment does not have. The
+   logic is unit-tested and the crypto is NIST-verified, but that specific end-to-end assertion is
+   honestly outstanding — anyone with a real account can check it in minutes by marking their own
+   username `RequirePremium` and connecting with a normal launcher.
 
 ## Context
 

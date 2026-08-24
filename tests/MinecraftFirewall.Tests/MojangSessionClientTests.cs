@@ -47,6 +47,24 @@ public class MojangSessionClientTests
     }
 
     [Fact]
+    public async Task HasJoinedAsync_Http200WithAnEmptyBody_ReturnsNotJoined()
+    {
+        // This is what Mojang ACTUALLY sends for "no such session" — confirmed against the live
+        // session server during Stage 4b's end-to-end run: HTTP 200 with an empty body, not the 204
+        // its documentation implies. It is also the most common response this client will ever see
+        // in production, since every cracked client attempting a premium-locked name produces it.
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(""),
+        }));
+        var client = CreateClient(handler);
+
+        var result = await client.HasJoinedAsync("CrackedUser", "somehash", CancellationToken.None);
+
+        Assert.False(result.Success);
+    }
+
+    [Fact]
     public async Task HasJoinedAsync_ServerError_ReturnsNotJoined_NotAnException()
     {
         var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)));
