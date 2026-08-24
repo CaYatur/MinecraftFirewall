@@ -62,6 +62,18 @@ public static class ClientConnection
             return;
         }
 
+        var hostnameDecision = policyEngine.EvaluateHostname(profile, remoteAddress, handshake.ServerAddress);
+        if (!hostnameDecision.Allow)
+        {
+            logger.LogInformation("[{Profile}] connection from {Ip} denied: {Reason}", profile.Name, remoteAddress, hostnameDecision.Reason);
+            if (handshake.NextState == HandshakeNextState.Login)
+            {
+                await TrySendDisconnectAsync(client, clientStream,
+                    "Bu sunucuya sadece izin verilen adres(ler) üzerinden bağlanılabilir.", hostShutdown).ConfigureAwait(false);
+            }
+            return;
+        }
+
         if (handshake.NextState == HandshakeNextState.Status)
         {
             await HandleStatusAsync(client, clientStream, handshakeFrame, profile, remoteAddress, policyEngine, logger, hostShutdown).ConfigureAwait(false);

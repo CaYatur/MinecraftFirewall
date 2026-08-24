@@ -29,6 +29,22 @@ public sealed class PolicyEngine(
 {
     private readonly FirewallBanOptions _banOptions = banOptions.Value;
 
+    /// <summary>Checked once per connection, right after the Handshake is parsed, before the
+    /// status/login branch — see HostnameMatcher for the matching rules and its important caveat
+    /// (this is not a cryptographic boundary; it only stops clients that don't lie about the field).</summary>
+    public PolicyDecision EvaluateHostname(ServerProfile profile, IPAddress remoteAddress, string serverAddress)
+    {
+        if (banService.IsBanned(remoteAddress))
+            return new PolicyDecision(false, "IP is currently firewall-banned.");
+
+        if (HostnameMatcher.IsAllowed(serverAddress, profile.AllowedHostnames))
+            return new PolicyDecision(true, "OK");
+
+        string logged = HostnameMatcher.TruncateForLogging(serverAddress);
+        RegisterStrikeAndMaybeBan(remoteAddress, $"[{profile.Name}] connection via disallowed hostname '{logged}'");
+        return new PolicyDecision(false, $"Hostname '{logged}' is not in this server's allowed-domains list.");
+    }
+
     public PolicyDecision EvaluateStatusPing(ServerProfile profile, IPAddress remoteAddress)
     {
         if (banService.IsBanned(remoteAddress))

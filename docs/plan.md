@@ -22,6 +22,13 @@
   built yet.
 - **Admin CLI / named pipe — not started.** `whitelist-add-me`, `list-bans`, `unban`, `require-premium`,
   `reload` all still need the loopback pipe server + `MinecraftFirewall.Admin` console client.
+- **Allowed-domains restriction — done.** Per-profile `AllowedHostnames` allowlist (`Policy/HostnameMatcher.cs`
+  + `PolicyEngine.EvaluateHostname`), checked right after the Handshake is parsed, before the status/login
+  branch. Supports exact hostnames and `*.example.com` wildcards; a mismatch on a login attempt sends a
+  Turkish kick message and registers a strike (not a fast-track ban — a stale server-list entry is a
+  plausible legitimate cause). Empty list (default) is fully backward-compatible: no restriction. See the
+  requirement-7 honesty note below — **this is not a cryptographic boundary**, only the literal
+  IP-firewall-rule setup described there makes it one.
 
 **Next session should start with:** a real end-to-end run — start a local Paper server (a fresh one can
 be re-downloaded via the PaperMC Fill API; the previous one lived at `test-server/`, gitignored, and was
@@ -43,6 +50,7 @@ Requirements gathered across this planning session, in the order they came up:
 4. If possible, commands executed by players after joining should be observable/audited.
 5. An additional, branded, lightweight subsystem — **"CaYaDev-Check"** — where players can register/log in, get remembered by IP so they aren't re-prompted, alongside everything above.
 6. **The strongest request**: if a player's *first* login under a given username is done from a genuine (premium/Microsoft-licensed) Minecraft account, that username should be permanently theirs — nobody else, cracked or otherwise, should ever be able to use that name again, even though the server itself stays `online-mode=false`.
+7. **Allowed-domains restriction** (added after Stage 3 shipped): only certain domain names should be able to reach the server at all — a connection using the raw server IP directly should be blocked, even if the attacker knows it, and multiple allowed domains must be supported.
 
 **Architecture: reverse proxy**, not raw packet-level filtering (WinDivert) — Minecraft's VarInt-length-prefixed TCP stream is far simpler to parse via `NetworkStream` than via reassembled raw IP packets, and this is the architecture real Minecraft firewall/anti-DDoS products use. One Windows process hosts N listeners (one per configured server profile) and shares IP-intel and firewall-ban infrastructure across all of them, so a block on one server applies machine-wide.
 
@@ -50,10 +58,13 @@ Requirements gathered across this planning session, in the order they came up:
 
 **Compression is the other thing that had to be corrected, and it now gates two separate features.** `online-mode=false` disables encryption (no AES) but does **not** disable packet compression. Once the backend sends `Set Compression` during login (default threshold 256), every later frame becomes `[length][dataLength][zlib payload]` instead of `[length][payload]`. Any code that reads Play-state packets — command auditing *and* the CaYaDev-Check chat-based register/login gate both need this — will silently read garbage the moment compression turns on unless the frame reader accounts for it. This must be verified empirically before either feature is built (see Stage 2).
 
+**Requirement 7 also needed an honesty correction, recorded here so the limitation isn't lost:** the Handshake packet's Server Address field — the only place a "which domain did they connect through" signal exists in the Minecraft protocol — is client-supplied and not cryptographically bound to how the TCP connection was actually made. A stock client pointed at a raw IP (Direct Connect, or the vast majority of scanning bots) sends that IP as the Server Address, so `Policy/HostnameMatcher.cs` correctly rejects it. But a custom/scripted client can simply put an allowed domain string in that field while still dialing the IP directly, and this check alone does not catch that. It's genuine defense-in-depth (stops IP-scanners and casual direct-IP joins), not a hard guarantee. Turning it into an actual hard guarantee — matching the literal "even if the IP is known, only the allowed domain works" ask — requires an OS-level control the Handshake field can't fake: a TCP-fronting proxy (Cloudflare Spectrum, TCPShield, etc.) in front, the allowed domain(s) pointed at it, and a Windows Firewall inbound rule on the public port that only permits that fronting proxy's IP ranges. That firewall step is a manual, user-owned setup decision (see "Manual steps" below), not something built into the app — the app's part is the hostname check, documented plainly as defense-in-depth in both this doc and the README.
+
 **Honesty notes to keep visible, not bury:**
 - This is defense-in-depth for a server that must stay `online-mode=false`, not a replacement for Mojang authentication.
 - Premium-lock only protects a name from the moment the admin declares it and the real owner successfully claims it. It cannot retroactively un-claim a name an attacker already grabbed in plain offline mode before that point — same first-come dynamic as Minecraft usernames generally.
 - For a premium-required connection, the *backend* server (still offline-mode) computes its own `OfflinePlayer:<name>` UUID and has no idea the proxy just verified a real Microsoft account — the real UUID does not reach the backend's world data. The proxy's verification is authoritative for *access control*, not for what the backend stores.
+- `AllowedHostnames` (per-profile, empty = unrestricted) is not a cryptographic boundary — see the requirement-7 note above. It also has no built-in loopback exemption: an admin testing from the same machine must add `localhost` to the list themselves, or they'll lock themselves out and reasonably assume it's a bug.
 
 ## Delivery is staged, not one flat build
 
@@ -189,6 +200,7 @@ tolerated, it can be added as an opt-in enhancement — it is not required for t
 - Per-server verification: no inbound Windows Firewall rule for the backend port, no router port-forward, confirmed failure connecting to the backend port from a non-loopback address
 - Installing the compiled app as a Windows Service and granting it firewall-modification rights
 - Live Windows Firewall rule creation happens only when the running service (under the user's control) decides to ban an IP — not something I execute during this build/planning session
+- If the user wants `AllowedHostnames` to be an actual hard guarantee rather than defense-in-depth: pointing the allowed domain(s)' DNS at a TCP-fronting proxy, and adding a Windows Firewall inbound rule on the public port restricted to that proxy's published IP ranges — a deliberate, user-owned network decision, not something the app configures itself
 
 ## Verification plan
 

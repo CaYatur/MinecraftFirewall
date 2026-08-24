@@ -13,6 +13,7 @@ public sealed class ServerProfileConfig
     public VpnPolicy VpnPolicy { get; set; } = VpnPolicy.BlockForProtectedUsernamesOnly;
     public bool UseDatacenterList { get; set; }
     public List<ProtectedUsernameConfig> ProtectedUsernames { get; set; } = [];
+    public List<string> AllowedHostnames { get; set; } = [];
 }
 
 public sealed class ProtectedUsernameConfig
@@ -37,6 +38,7 @@ public static class ServerProfileFactory
                 BackendPort = config.BackendPort,
                 VpnPolicy = config.VpnPolicy,
                 UseDatacenterList = config.UseDatacenterList,
+                AllowedHostnames = config.AllowedHostnames,
             };
 
             foreach (var protectedUsername in config.ProtectedUsernames)

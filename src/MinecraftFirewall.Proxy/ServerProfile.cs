@@ -30,5 +30,13 @@ public sealed class ServerProfile
     /// </summary>
     public bool UseDatacenterList { get; init; }
 
+    /// <summary>
+    /// When non-empty, only connections whose Handshake Server Address matches one of these entries
+    /// (exact, case-insensitive, or a "*.example.com" subdomain wildcard) are allowed — see
+    /// Policy/HostnameMatcher.cs for the matching rules and an important caveat about what this
+    /// does and does not guarantee. Empty (default) means no restriction, matching vanilla behavior.
+    /// </summary>
+    public IReadOnlyList<string> AllowedHostnames { get; init; } = [];
+
     public IdentityStore IdentityStore { get; } = new();
 }

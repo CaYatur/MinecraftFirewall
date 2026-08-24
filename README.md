@@ -24,6 +24,11 @@ current status. What's implemented right now:
   [X4BNet/lists_vpn](https://github.com/X4BNet/lists_vpn), refreshed daily, cached to disk, fails open
   if the source is unreachable.
 - **Per-profile rate limiting** — sliding window, separate thresholds for status pings vs. login attempts.
+- **Allowed-domains restriction** — an optional per-profile allowlist of hostnames (exact or
+  `*.example.com` wildcard); a connection whose Handshake Server Address doesn't match one of them is
+  denied before it ever reaches the backend, even if the attacker knows the server's raw IP. **Read the
+  honesty note below before relying on this** — it stops IP-scanning bots and casual direct-IP joins,
+  but a client that deliberately fakes this field is not stopped by this check alone.
 - **Windows Firewall bans** — repeat offenders get a real, machine-wide block rule via the
   `INetFwPolicy2` COM API (never `netsh` with interpolated input), with a TTL, a hardcoded never-ban list
   (loopback/RFC1918/admin allowlist), and an in-process fallback if the service isn't running elevated.
@@ -45,6 +50,17 @@ for exactly what to run next.
 - **You must ensure the real Minecraft server's port is not reachable from outside the machine** — no
   inbound firewall rule for it, no router port-forward. This is the single most important setup step;
   the proxy provides no protection if the real server is still directly reachable.
+- **`AllowedHostnames` is not a cryptographic boundary.** The Handshake's Server Address field is
+  whatever string the connecting client sends — it is not bound to how the TCP connection was actually
+  made. A stock Minecraft client pointed at a raw IP (Direct Connect, or most scanning bots) sends that
+  IP as the Server Address and is correctly rejected. A custom/scripted client that deliberately fakes
+  this field to match an allowed domain, while still connecting straight to the server's IP, is **not**
+  stopped by this check alone. If you need that to be an actual hard guarantee rather than
+  defense-in-depth, put a TCP-fronting proxy (e.g. Cloudflare Spectrum, TCPShield) in front, point your
+  domain(s) at it, and add a Windows Firewall inbound rule on the public port that only permits that
+  fronting proxy's IP ranges — then a direct-IP connection dies at the OS firewall regardless of what
+  the Handshake claims. Also: if you're testing from the same machine, add `localhost` to
+  `AllowedHostnames`, or you will lock out your own local connections once the list is non-empty.
 
 ## Project layout
 
@@ -65,6 +81,10 @@ docs/protocol/                     Sourced packet-ID reference data (Mojang's ow
    port-forward).
 3. Edit `src/MinecraftFirewall.Proxy/appsettings.json` — add a `ServerProfiles` entry per server with the
    public port, the backend host/port from step 1, and any protected usernames.
+   - Optional: to restrict which domain(s) players may connect through, set `AllowedHostnames`.
+     Point an A/CNAME record for each domain at the proxy machine's public IP first — the client just
+     needs to resolve the name before connecting, the proxy doesn't do DNS itself. Read the honesty
+     note above before relying on this for anything more than defense-in-depth.
 4. Build and run:
 
 ```bash

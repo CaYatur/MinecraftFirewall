@@ -218,6 +218,74 @@ public class PolicyEngineTests
     }
 
     [Fact]
+    public void EvaluateHostname_NoRestrictionConfigured_Allows()
+    {
+        var fixture = CreateFixture();
+        var profile = CreateProfile(); // AllowedHostnames defaults to empty
+
+        var decision = fixture.Engine.EvaluateHostname(profile, IPAddress.Parse("203.0.113.1"), "203.0.113.1");
+
+        Assert.True(decision.Allow);
+    }
+
+    [Fact]
+    public void EvaluateHostname_MatchingDomain_Allows()
+    {
+        var fixture = CreateFixture();
+        var profile = new ServerProfile
+        {
+            Name = "profileA",
+            PublicPort = 25565,
+            BackendHost = "127.0.0.1",
+            BackendPort = 25566,
+            AllowedHostnames = ["mc.example.com"],
+        };
+
+        var decision = fixture.Engine.EvaluateHostname(profile, IPAddress.Parse("203.0.113.1"), "mc.example.com");
+
+        Assert.True(decision.Allow);
+    }
+
+    [Fact]
+    public void EvaluateHostname_DirectIpConnect_IsDeniedWhenAllowlistConfigured()
+    {
+        var fixture = CreateFixture();
+        var profile = new ServerProfile
+        {
+            Name = "profileA",
+            PublicPort = 25565,
+            BackendHost = "127.0.0.1",
+            BackendPort = 25566,
+            AllowedHostnames = ["mc.example.com"],
+        };
+        var ip = IPAddress.Parse("203.0.113.1");
+
+        var decision = fixture.Engine.EvaluateHostname(profile, ip, ip.ToString());
+
+        Assert.False(decision.Allow);
+    }
+
+    [Fact]
+    public void EvaluateHostname_RepeatedMismatches_EscalatesToFirewallBan()
+    {
+        var fixture = CreateFixture(strikesBeforeBan: 3);
+        var profile = new ServerProfile
+        {
+            Name = "profileA",
+            PublicPort = 25565,
+            BackendHost = "127.0.0.1",
+            BackendPort = 25566,
+            AllowedHostnames = ["mc.example.com"],
+        };
+        var ip = IPAddress.Parse("203.0.113.1");
+
+        for (int i = 0; i < 3; i++)
+            fixture.Engine.EvaluateHostname(profile, ip, "not-allowed.example");
+
+        Assert.True(fixture.BanService.IsBanned(ip));
+    }
+
+    [Fact]
     public void EvaluateStatusPing_RateLimitIndependentFromLogin()
     {
         var fixture = CreateFixture(loginMaxPerWindow: 1);
