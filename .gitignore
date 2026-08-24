@@ -26,3 +26,8 @@ appsettings.*.local.json
 ## large/regeneratable local artifacts, not source. Only the small packets-*.json excerpt this
 ## project actually sourced IDs from is committed, under docs/protocol/.
 test-server/
+
+## Ad-hoc logs from manual live-verification runs (proxy + ProtocolSpike) — regenerated each time,
+## never source.
+proxy.log
+spike.log

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using MinecraftFirewall.Proxy.Protocol;
 
 // Stage 2 empirical spike: connect to a real local server exactly like the proxy would forward a
@@ -14,6 +15,18 @@ using MinecraftFirewall.Proxy.Protocol;
 // public port (not the backend) to exercise the real policy/kick paths, e.g.:
 //   dotnet run --project tools/MinecraftFirewall.ProtocolSpike -- 127.0.0.1 25565 SpikeTestUser register:testpw123
 //   dotnet run --project tools/MinecraftFirewall.ProtocolSpike -- 127.0.0.1 25565 SpikeTestUser login:wrongpw 127.0.0.2
+//
+// playMode "encryption-probe" is a Stage 4 spike: point it at the BACKEND directly (not the proxy)
+// with server.properties temporarily set to online-mode=true, e.g.:
+//   dotnet run --project tools/MinecraftFirewall.ProtocolSpike -- 127.0.0.1 25566 SpikeTestUser encryption-probe
+// It dumps the real Encryption Request field layout for this exact protocol version, then completes
+// the crypto handshake mechanically (random shared secret, RSA-PKCS1-encrypted with the server's own
+// public key) and sends a real Encryption Response — not to actually authenticate (there's no genuine
+// Microsoft account behind SpikeTestUser), but because Paper's reaction is diagnostic either way: a
+// clean "Failed to verify username!" in Paper's own log means it decrypted successfully and only
+// failed at the Mojang session-server call (i.e. this tool's Response field layout is correct); a
+// decrypt/packet-framing error instead means the layout guess above is wrong. Remember to set
+// online-mode back to false afterward — this tool never does that for you.
 
 string host = args.Length > 0 ? args[0] : "127.0.0.1";
 int port = args.Length > 1 ? int.Parse(args[1]) : 25566;
@@ -43,6 +56,13 @@ byte[] loginStart = BuildLoginStartFrame(username);
 await stream.WriteAsync(handshake);
 await stream.WriteAsync(loginStart);
 Console.WriteLine($"Sent Handshake (next_state=login) + Login Start as '{username}'. Reading raw frames for 8 seconds...\n");
+
+if (playMode == "encryption-probe")
+{
+    using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+    await RunEncryptionProbeAsync(stream, probeCts.Token);
+    return;
+}
 
 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
 int frameIndex = 0;
@@ -305,4 +325,97 @@ static byte[] EncodeString(string text)
 {
     byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
     return [.. VarInt.Encode(bytes.Length), .. bytes];
+}
+
+// "Prefixed Array of Byte" per the protocol: a VarInt length followed by that many raw bytes —
+// used for the Encryption Request's public key / verify token and the Encryption Response's
+// encrypted shared secret / encrypted verify token.
+static byte[] ReadPrefixedBytes(ReadOnlySpan<byte> buffer, out int bytesRead)
+{
+    int length = VarInt.Decode(buffer, out int lenSize);
+    byte[] result = buffer.Slice(lenSize, length).ToArray();
+    bytesRead = lenSize + length;
+    return result;
+}
+
+static byte[] EncodePrefixedBytes(byte[] data) => [.. VarInt.Encode(data.Length), .. data];
+
+// Stage 4 spike: dumps the real Encryption Request field layout for this protocol version, then
+// mechanically completes the crypto handshake (see the doc comment at the top of this file for why
+// this is diagnostic even without a real Microsoft account behind the connecting username).
+static async Task RunEncryptionProbeAsync(NetworkStream stream, CancellationToken ct)
+{
+    Frame frame = await FrameReader.ReadFrameAsync(stream, maxFrameSize: 64 * 1024, ct);
+    ReadOnlySpan<byte> payload = frame.Payload;
+    int packetId = VarInt.Decode(payload, out int idLen);
+    Console.WriteLine($"[encryption-probe] RAW len={frame.Raw.Length} packetId=0x{packetId:X2} payload={ToHex(payload)}");
+
+    if (packetId == 0x00)
+    {
+        string json = MinecraftPrimitives.ReadString(payload[idLen..], out _);
+        Console.WriteLine($"[encryption-probe] Got a LOGIN DISCONNECT instead of Encryption Request — server is not online-mode, or rejected the login before crypto. Message JSON: {json}");
+        return;
+    }
+
+    if (packetId != 0x01)
+    {
+        Console.WriteLine($"[encryption-probe] Unexpected packet id 0x{packetId:X2} where Encryption Request (0x01) was expected. Layout assumption is WRONG for this protocol version, or this server isn't online-mode.");
+        return;
+    }
+
+    ReadOnlySpan<byte> rest = payload[idLen..];
+    int offset = 0;
+
+    string serverId = MinecraftPrimitives.ReadString(rest, out int serverIdLen);
+    offset += serverIdLen;
+    Console.WriteLine($"[encryption-probe]   Server ID (String) = \"{serverId}\" ({serverIdLen} bytes on wire)");
+
+    byte[] publicKeyDer = ReadPrefixedBytes(rest[offset..], out int pubKeyLen);
+    offset += pubKeyLen;
+    Console.WriteLine($"[encryption-probe]   Public Key (Prefixed Array of Byte) = {publicKeyDer.Length} bytes: {ToHex(publicKeyDer)}");
+
+    byte[] verifyToken = ReadPrefixedBytes(rest[offset..], out int verifyTokenLen);
+    offset += verifyTokenLen;
+    Console.WriteLine($"[encryption-probe]   Verify Token (Prefixed Array of Byte) = {verifyToken.Length} bytes: {ToHex(verifyToken)}");
+
+    int remaining = rest.Length - offset;
+    Console.WriteLine($"[encryption-probe]   Bytes remaining after Verify Token: {remaining}");
+    if (remaining == 1)
+        Console.WriteLine($"[encryption-probe]   -> matches a trailing 'Should Authenticate' Boolean, value={rest[offset]}");
+    else if (remaining != 0)
+        Console.WriteLine($"[encryption-probe]   -> UNEXPECTED trailing bytes, layout assumption may be wrong: {ToHex(rest[offset..])}");
+
+    // Mechanically complete the handshake: this is not a real Microsoft account, so Mojang's
+    // session-server check WILL fail server-side — that failure is itself the signal (see the doc
+    // comment at the top of this file). We only need Paper to successfully DECRYPT our response.
+    using RSA rsa = RSA.Create();
+    rsa.ImportSubjectPublicKeyInfo(publicKeyDer, out _);
+    byte[] sharedSecret = RandomNumberGenerator.GetBytes(16);
+    byte[] encryptedSharedSecret = rsa.Encrypt(sharedSecret, RSAEncryptionPadding.Pkcs1);
+    byte[] encryptedVerifyToken = rsa.Encrypt(verifyToken, RSAEncryptionPadding.Pkcs1);
+
+    byte[] responsePayload =
+    [
+        .. VarInt.Encode(0x01),
+        .. EncodePrefixedBytes(encryptedSharedSecret),
+        .. EncodePrefixedBytes(encryptedVerifyToken),
+    ];
+    await stream.WriteAsync(WrapFrame(responsePayload), ct);
+    Console.WriteLine("[encryption-probe] Sent Encryption Response (encrypted shared secret + encrypted verify token). Check the SERVER's own console/log now:");
+    Console.WriteLine("[encryption-probe]   - \"Failed to verify username!\" (or similar auth-specific failure) => this Response layout is CORRECT (server decrypted fine, only the Mojang session check failed, as expected for a fake account).");
+    Console.WriteLine("[encryption-probe]   - A decrypt/packet/framing exception instead => this Response layout is WRONG.");
+
+    // Best-effort: try to read whatever the server sends next. Once it processes our Encryption
+    // Response, its side of the stream becomes AES-CFB8 encrypted — this tool doesn't implement that
+    // cipher, so this will very likely fail to parse as a valid frame. That failure is expected and
+    // not itself meaningful; the server-side log message above is the real signal.
+    try
+    {
+        Frame next = await FrameReader.ReadFrameAsync(stream, maxFrameSize: 64 * 1024, ct);
+        Console.WriteLine($"[encryption-probe] Received {next.Raw.Length} more bytes after Encryption Response (likely encrypted — not decoded by this tool): {ToHex(next.Payload)}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[encryption-probe] (expected) could not parse a further frame — connection is encrypted from here, this tool doesn't implement AES-CFB8: {ex.GetType().Name}: {ex.Message}");
+    }
 }

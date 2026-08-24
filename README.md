@@ -4,7 +4,7 @@ Windows reverse-proxy firewall for Minecraft Java Edition servers running `onlin
 protection plugins. It sits in front of the real server (which binds to `127.0.0.1` only) and decides,
 per connection, whether to forward it — without any plugin/mod inside Minecraft itself.
 
-## Status: Stage 3 of 4 (171 automated tests passing)
+## Status: Stage 4a of 4 (199 automated tests passing)
 
 This is an in-progress build. See [`docs/plan.md`](docs/plan.md) for the complete staged design doc and
 current status. What's implemented right now:
@@ -45,10 +45,13 @@ current status. What's implemented right now:
   can connect to (must be run elevated). Every mutating command is in-memory only and says so in its own
   output — it does not survive a service restart unless you also add it to `appsettings.json`.
 
-**Not implemented yet:** admin-declared premium (real Mojang account) verification that permanently
-locks a username to its genuine owner (Stage 4 — the feature behind the strongest original request; the
-`require-premium` CLI command above sets the flag, but until Stage 4 ships, a `PremiumRequired` name is
-simply denied outright for everyone — no verification path exists yet).
+**Not implemented yet:** the login splice (Stage 4b) that would actually let a genuine Mojang account
+through. The verification logic itself — RSA Encryption Request/Response, Mojang `hasJoined` session
+check, session-hash computation — is built and unit-tested (`Identity/Premium/`), and its wire format
+was confirmed empirically against a real Paper server (see `docs/plan.md`'s Stage 4a note), but it is
+not wired into any connection's login flow yet. The `require-premium` CLI command above still just sets
+a flag; until Stage 4b ships, a `PremiumRequired` name is denied outright for everyone — no verification
+path is reachable yet.
 
 **Verified end-to-end, not just with synthetic unit tests:** the compiled service was run against a
 real local Paper server, driven through the proxy's public port by a real protocol-correct client. This

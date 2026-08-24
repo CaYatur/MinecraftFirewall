@@ -65,10 +65,62 @@
     spike client is a real, protocol-correct implementation, not a mock, but it is still this
     project's own code. A real launcher/client run remains a reasonable follow-up if anyone wants
     additional confidence before relying on this in production.
-- **Stage 4 — not started.** Premium/Mojang verification (admin-declared `PremiumRequired`, real
-  encryption handshake + `hasJoined`, login-splice, UUID pinning). This is the feature behind the
-  user's strongest original request (a genuine account permanently owning a username) and hasn't been
-  built yet.
+- **Stage 4a (the verifier) — done, deliberately unwired. Stage 4b (the login splice) — not started.**
+  Per an advisor consultation before starting: build Stage 4 in two commits, a pure-logic verifier
+  first (no sockets, fully unit-testable), then the login splice separately, since the splice is real
+  new production risk (a framing bug there breaks connections, not just kicks) that deserves its own
+  live-verification pass, the same way the Stage 3 bug above was only found by one.
+  - **Empirical field-layout verification, not a guess from the wiki.** Earlier research in this
+    project (minecraft.wiki, protocol 776 — one version ahead of this project's verified 774) gave a
+    *plausible* Encryption Request/Response shape, but this project has already been burned once by
+    trusting a wiki's packet layout over the actual tested version (the Stage 3 chat/command ID
+    mismatch). So before writing any Stage 4a code: `test-server/server.properties` was flipped to
+    `online-mode=true` temporarily, and `tools/MinecraftFirewall.ProtocolSpike` got a new
+    `encryption-probe` mode that connects straight to the real backend, dumps the real Encryption
+    Request's raw bytes and field-by-field decode, then mechanically completes the crypto handshake
+    (generates a random shared secret, RSA-PKCS1-encrypts it and the verify token with the server's
+    own public key, sends a real Encryption Response) — not to actually authenticate as a real
+    Microsoft account (there isn't one behind the test username), but because Paper's own reaction is
+    the diagnostic signal either way: a clean `Failed to verify username!` in Paper's log means Paper
+    decrypted successfully and only failed at the Mojang session-server call (i.e. the field layout is
+    right); a decrypt/framing error instead would mean it's wrong. Live result against a real Paper
+    1.21.11 (protocol 774) server: **`Failed to verify username!` / `Username 'SpikeTestUser' tried to
+    join with an invalid session`** — confirming both directions of the field layout. Confirmed
+    concretely: Server ID is an empty string; Public Key is a 162-byte X.509 SubjectPublicKeyInfo DER
+    (i.e. a 1024-bit RSA key, matching real Notchian/Paper server behavior); Verify Token is 4 bytes;
+    a trailing Boolean `Should Authenticate` field is present and was `true`; the Encryption Response
+    is exactly two Prefixed-Array-of-Byte fields (no message-signing fields — that mechanism was
+    removed in 1.19.3, confirmed still absent here) and RSA-PKCS1v1.5 padding is what Paper expects
+    (OAEP would have made decryption fail, which it didn't). `server.properties` was reverted to
+    `online-mode=false` immediately afterward.
+  - **The verifier itself** (`Identity/Premium/`, all pure logic, no sockets, 28 new unit tests):
+    `RsaServerKeyPair` (one 1024-bit keypair generated once, matching Paper's own "Generating keypair"
+    happening once at startup, not per-connection), `EncryptionRequestPacket`/`EncryptionResponsePacket`
+    (builder/parser for the field layout confirmed above), `PremiumSessionHash` (the Mojang session
+    hash: SHA-1 over serverId+sharedSecret+publicKeyDer, formatted as Java's
+    `new BigInteger(digest).toString(16)` — signed, two's-complement, no leading-zero padding, which
+    can produce a leading `-`; **this is the one place in Stage 4a where a bug would be silently
+    invisible to a round-trip test**, since a round-trip of broken sign/endianness handling against
+    itself still passes — verified instead against the three published known-answer vectors for this
+    exact function, `SHA1("Notch"/"jeb_"/"simon")`), `IPremiumSessionClient`/`MojangSessionClient` (the
+    real `hasJoined` HTTP call, `FakeHttpMessageHandler`-tested), and `PremiumVerifier` (orchestrates:
+    RSA-decrypt both fields, constant-time verify-token comparison, compute the session hash, call
+    `hasJoined`, return success + the real UUID or a typed failure reason).
+  - **Deliberately fail-*closed*, the opposite of every other network-dependent signal in this
+    project.** `IpInfoClient` and the X4BNet VPN lists both fail *open* (an outage never blocks a
+    legitimate player) because they're heuristic secondary signals. `MojangSessionClient` fails
+    *closed* — a timeout, a non-success status, or a malformed body all come back as `NotJoined`,
+    never a fallback to "allow, we couldn't check" — because this is the strong gate an admin
+    explicitly declared for this exact username; falling open here would silently defeat the entire
+    point of `PremiumRequired`. Documented directly in `IPremiumSessionClient`'s doc comment specifically
+    so this asymmetry isn't "fixed" into consistency with the other clients by a future change.
+  - **Deliberately not wired into `IdentityGate`/`ClientConnection` yet.** `IdentityGate`'s existing
+    fail-closed `Deny` for `PremiumRequired` names (see Stage 3 above) is untouched — a `PremiumRequired`
+    name is still denied outright for everyone, exactly as before. Wiring the verifier in requires the
+    login splice (Stage 4b): the proxy has to actually own the client's encrypted Login sequence to
+    ever get an Encryption Response to hand this verifier, which doesn't exist yet. Leaving the
+    verifier connected to nothing rather than half-wired avoids a state where a `PremiumRequired`
+    name silently behaves differently depending on how far a refactor got.
 - **Admin CLI / named pipe — done (Task #18).** `Admin/AdminProtocol.cs` (a tiny newline-delimited-JSON
   request/response contract), `Admin/AdminCommandHandler.cs` (the actual command logic, unit-testable
   without a real pipe), `Admin/AdminPipeServer.cs` (the transport — a `BackgroundService` hosting a
@@ -146,17 +198,21 @@
   the primary X4BNet list is checked first, skipping the ipinfo call entirely when it already decided
   the outcome.
 
-**Next session should start with:** Stage 4 (premium/Mojang verification). The live end-to-end run this
-note used to point at is now done — see the "Live end-to-end verification" entry above, including the
-real bug it found and fixed in `PlayStateInspector`'s Login→Configuration→Play phase tracking. Per the
-advisor consultation that shaped this session's ordering (ipinfo → Admin CLI → live verification → Stage
-4), build Stage 4 in two commits: (a) the verifier — RSA keypair, Encryption Request/Response,
-shared-secret decrypt, `hasJoined` call, UUID pin check — fully unit-testable with no sockets; then (b)
-the login splice — the AES-CFB8 stream shim that makes the client side of the connection encrypted while
-the backend side stays plaintext, which is real, and the largest single, remaining risk in this project
-(a framing bug there breaks connections, not just kicks — see the CFB8 streaming-byte-at-a-time test
-guidance the advisor gave, and consider a second live end-to-end pass with a real premium account before
-calling it done, the same way the Play-state kick path was until this session).
+**Next session should start with:** Stage 4b — the login splice. Stage 4a (the verifier — RSA keypair,
+Encryption Request/Response, shared-secret decrypt + verify-token check, session hash, `hasJoined` call)
+is done and unit-tested, its field layout empirically confirmed live against a real Paper 1.21.11 server
+(see the Stage 4a entry above), but it is not wired into anything yet — `IdentityGate` still denies every
+`PremiumRequired` name outright. Stage 4b is the largest single remaining piece of work in this project:
+the proxy has to actually terminate the client's Login sequence itself (send the real Encryption Request,
+receive the real Encryption Response, hand it to `PremiumVerifier`), then open a *separate*, plaintext,
+offline-mode login to the backend as a normal client would — from that point the client side of the
+connection is AES-CFB8 encrypted while the backend side stays plaintext, so `PlayStateInspector` needs a
+decrypt/encrypt shim for these specific connections, not just frame reads. This is real new risk (a
+framing bug here breaks connections outright, not just kicks — unlike Stage 4a, which fails safely by
+construction), so plan a second live end-to-end pass before calling it done, the same way the Stage 3
+kick path was verified live this session. A real premium Microsoft/Mojang account is needed for a true
+positive-path live test; without one, the negative path (a cracked client denied) can still be verified
+the same way Stage 4a's field layout was — see the `encryption-probe` mode's approach.
 
 ## Context
 
