@@ -114,6 +114,20 @@
     explicitly declared for this exact username; falling open here would silently defeat the entire
     point of `PremiumRequired`. Documented directly in `IPremiumSessionClient`'s doc comment specifically
     so this asymmetry isn't "fixed" into consistency with the other clients by a future change.
+  - **The `ip` parameter question, checked as far as it can be without a real Microsoft account.** An
+    advisor review flagged a real risk: `hasJoined` accepts an optional `&ip=` parameter that Mojang
+    cross-checks against the IP the *client's own launcher* reported, and `Should Authenticate`
+    (Encryption Request's trailing boolean, hardcoded `true` here) *might* be the same knob in
+    disguise — getting this wrong fails closed, denying a genuine premium owner, which the whole
+    feature exists to prevent. Checked locally: toggled a real Paper server's
+    `prevent-proxy-connections` (`false` → `true`) and re-ran `encryption-probe` — `Should
+    Authenticate` stayed `true` both times. That's evidence the two are independent: `Should
+    Authenticate` is this proxy telling the *client* to actually verify (unrelated to whether the
+    *proxy's own* `hasJoined` call should assert an IP), so hardcoding it `true` and never sending
+    `&ip=` are both safe, independent, and correct as implemented — documented directly in
+    `MojangSessionClient`'s doc comment. What this check could *not* settle: real behavior on
+    Mojang's actual session server for a genuine positive-path login, since that needs a real
+    Microsoft account. Revisit if one becomes available for a live Stage 4b test.
   - **Deliberately not wired into `IdentityGate`/`ClientConnection` yet.** `IdentityGate`'s existing
     fail-closed `Deny` for `PremiumRequired` names (see Stage 3 above) is untouched — a `PremiumRequired`
     name is still denied outright for everyone, exactly as before. Wiring the verifier in requires the

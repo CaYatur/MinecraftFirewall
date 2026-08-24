@@ -5,8 +5,26 @@ using Microsoft.Extensions.Options;
 
 namespace MinecraftFirewall.Proxy.Identity.Premium;
 
-/// <summary>Real Mojang session-server client. See IPremiumSessionClient's doc comment for why this
-/// fails CLOSED (any error -> NotJoined), the opposite of IpInfoClient's fail-open behavior.</summary>
+/// <summary>
+/// Real Mojang session-server client. See IPremiumSessionClient's doc comment for why this fails
+/// CLOSED (any error -> NotJoined), the opposite of IpInfoClient's fail-open behavior.
+///
+/// Deliberately never sends the optional `&amp;ip=` query parameter (Mojang's session server would
+/// cross-check it against the IP the client's own launcher reported when it called Mojang's
+/// joinServer API). A live check confirmed this proxy's `Should Authenticate` field (sent to the
+/// client in Encryption Request, always true here — see EncryptionRequestPacket) is NOT the same
+/// knob as this: toggling a real Paper server's `prevent-proxy-connections` between true/false left
+/// `Should Authenticate` unchanged (still true both times) — so the two are independent, and
+/// `Should Authenticate` is this proxy telling the CLIENT to actually verify, not a signal about
+/// whether the server-side call should assert an IP. Whether to assert `ip` is this proxy's own
+/// separate decision, and it deliberately never does: in this architecture the client connects to
+/// the proxy, not directly to whatever backend/fronting setup sits beyond it (see the README's
+/// TCP-fronting-proxy honesty note), so the proxy's own observed remote address is not guaranteed to
+/// match what the client's launcher told Mojang. Sending a wrong `ip` fails CLOSED, i.e. it would
+/// deny a genuine premium owner — exactly the outcome this feature's design explicitly forbids — so
+/// omitting it is the safe default. This could not be fully settled without a real Microsoft
+/// account's positive-path behavior; revisit if that becomes available for a live 4b test.
+/// </summary>
 public sealed class MojangSessionClient(
     IHttpClientFactory httpClientFactory,
     IOptions<PremiumOptions> options,
