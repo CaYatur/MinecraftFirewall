@@ -13,9 +13,9 @@ namespace MinecraftFirewall.Tests;
 
 public class PolicyEngineTests
 {
-    private sealed record Fixture(PolicyEngine Engine, VpnIntelligence VpnIntel, FakeWindowsFirewallGateway Gateway, FirewallBanService BanService);
+    private sealed record Fixture(PolicyEngine Engine, VpnIntelligence VpnIntel, FakeWindowsFirewallGateway Gateway, FirewallBanService BanService, FakeIpInfoClient IpInfo);
 
-    private static Fixture CreateFixture(int strikesBeforeBan = 5, int loginMaxPerWindow = 100)
+    private static Fixture CreateFixture(int strikesBeforeBan = 5, int loginMaxPerWindow = 100, IpInfoOptions? ipInfoOptions = null)
     {
         var vpnIntel = new VpnIntelligence();
         var rateLimiter = new ConnectionRateLimiter(Options.Create(new RateLimitOptions
@@ -30,9 +30,11 @@ public class PolicyEngineTests
         var banOptions = Options.Create(new FirewallBanOptions { StrikesBeforeBan = strikesBeforeBan });
         var banService = new FirewallBanService(banOptions, neverBanList, gateway, NullLogger<FirewallBanService>.Instance);
         var strikeTracker = new StrikeTracker();
+        var ipInfo = new FakeIpInfoClient();
 
-        var engine = new PolicyEngine(vpnIntel, rateLimiter, banService, strikeTracker, banOptions, NullLogger<PolicyEngine>.Instance);
-        return new Fixture(engine, vpnIntel, gateway, banService);
+        var engine = new PolicyEngine(vpnIntel, rateLimiter, banService, strikeTracker, ipInfo, banOptions,
+            Options.Create(ipInfoOptions ?? new IpInfoOptions()), NullLogger<PolicyEngine>.Instance);
+        return new Fixture(engine, vpnIntel, gateway, banService, ipInfo);
     }
 
     private static ServerProfile CreateProfile(string name = "profileA", VpnPolicy vpnPolicy = VpnPolicy.BlockForProtectedUsernamesOnly, bool useDatacenterList = false)
@@ -49,18 +51,18 @@ public class PolicyEngineTests
     }
 
     [Fact]
-    public void EvaluateLogin_UnprotectedUsername_NoVpn_Allows()
+    public async Task EvaluateLogin_UnprotectedUsername_NoVpn_Allows()
     {
         var fixture = CreateFixture();
         var profile = CreateProfile();
 
-        var decision = fixture.Engine.EvaluateLogin(profile, IPAddress.Parse("203.0.113.1"), "RandomPlayer");
+        var decision = await fixture.Engine.EvaluateLogin(profile, IPAddress.Parse("203.0.113.1"), "RandomPlayer");
 
         Assert.True(decision.Allow);
     }
 
     [Fact]
-    public void EvaluateLogin_ProtectedUsername_AllowlistedIp_Allows()
+    public async Task EvaluateLogin_ProtectedUsername_AllowlistedIp_Allows()
     {
         var fixture = CreateFixture();
         var profile = CreateProfile();
@@ -68,13 +70,13 @@ public class PolicyEngineTests
         entry.StaticAllowlist.Add(CidrRange.Parse("203.0.113.0/24"));
         profile.IdentityStore.AddOrReplace(entry);
 
-        var decision = fixture.Engine.EvaluateLogin(profile, IPAddress.Parse("203.0.113.5"), "Admin");
+        var decision = await fixture.Engine.EvaluateLogin(profile, IPAddress.Parse("203.0.113.5"), "Admin");
 
         Assert.True(decision.Allow);
     }
 
     [Fact]
-    public void EvaluateLogin_ProtectedUsername_WrongIp_Denies()
+    public async Task EvaluateLogin_ProtectedUsername_WrongIp_Denies()
     {
         var fixture = CreateFixture();
         var profile = CreateProfile();
@@ -82,13 +84,13 @@ public class PolicyEngineTests
         entry.StaticAllowlist.Add(CidrRange.Parse("203.0.113.0/24"));
         profile.IdentityStore.AddOrReplace(entry);
 
-        var decision = fixture.Engine.EvaluateLogin(profile, IPAddress.Parse("198.51.100.9"), "Admin");
+        var decision = await fixture.Engine.EvaluateLogin(profile, IPAddress.Parse("198.51.100.9"), "Admin");
 
         Assert.False(decision.Allow);
     }
 
     [Fact]
-    public void EvaluateLogin_VpnFlagged_ProtectedUsername_BlockForProtectedOnly_Denies()
+    public async Task EvaluateLogin_VpnFlagged_ProtectedUsername_BlockForProtectedOnly_Denies()
     {
         var fixture = CreateFixture();
         var profile = CreateProfile(vpnPolicy: VpnPolicy.BlockForProtectedUsernamesOnly);
@@ -97,37 +99,37 @@ public class PolicyEngineTests
         profile.IdentityStore.AddOrReplace(entry);
         fixture.VpnIntel.UpdateVpnOnly(Ipv4RangeTable.Parse(["203.0.113.0/24"])); // ...but is also a known VPN range
 
-        var decision = fixture.Engine.EvaluateLogin(profile, IPAddress.Parse("203.0.113.5"), "Admin");
+        var decision = await fixture.Engine.EvaluateLogin(profile, IPAddress.Parse("203.0.113.5"), "Admin");
 
         Assert.False(decision.Allow);
     }
 
     [Fact]
-    public void EvaluateLogin_VpnFlagged_UnprotectedUsername_BlockForProtectedOnly_StillAllows()
+    public async Task EvaluateLogin_VpnFlagged_UnprotectedUsername_BlockForProtectedOnly_StillAllows()
     {
         var fixture = CreateFixture();
         var profile = CreateProfile(vpnPolicy: VpnPolicy.BlockForProtectedUsernamesOnly);
         fixture.VpnIntel.UpdateVpnOnly(Ipv4RangeTable.Parse(["203.0.113.0/24"]));
 
-        var decision = fixture.Engine.EvaluateLogin(profile, IPAddress.Parse("203.0.113.5"), "RandomPlayer");
+        var decision = await fixture.Engine.EvaluateLogin(profile, IPAddress.Parse("203.0.113.5"), "RandomPlayer");
 
         Assert.True(decision.Allow);
     }
 
     [Fact]
-    public void EvaluateLogin_VpnFlagged_BlockForEveryone_DeniesUnprotectedToo()
+    public async Task EvaluateLogin_VpnFlagged_BlockForEveryone_DeniesUnprotectedToo()
     {
         var fixture = CreateFixture();
         var profile = CreateProfile(vpnPolicy: VpnPolicy.BlockForEveryone);
         fixture.VpnIntel.UpdateVpnOnly(Ipv4RangeTable.Parse(["203.0.113.0/24"]));
 
-        var decision = fixture.Engine.EvaluateLogin(profile, IPAddress.Parse("203.0.113.5"), "RandomPlayer");
+        var decision = await fixture.Engine.EvaluateLogin(profile, IPAddress.Parse("203.0.113.5"), "RandomPlayer");
 
         Assert.False(decision.Allow);
     }
 
     [Fact]
-    public void EvaluateLogin_VpnFlagged_LogOnly_AlwaysAllows()
+    public async Task EvaluateLogin_VpnFlagged_LogOnly_AlwaysAllows()
     {
         var fixture = CreateFixture();
         var profile = CreateProfile(vpnPolicy: VpnPolicy.LogOnly);
@@ -136,68 +138,68 @@ public class PolicyEngineTests
         profile.IdentityStore.AddOrReplace(entry);
         fixture.VpnIntel.UpdateVpnOnly(Ipv4RangeTable.Parse(["203.0.113.0/24"]));
 
-        var decision = fixture.Engine.EvaluateLogin(profile, IPAddress.Parse("203.0.113.5"), "Admin");
+        var decision = await fixture.Engine.EvaluateLogin(profile, IPAddress.Parse("203.0.113.5"), "Admin");
 
         Assert.True(decision.Allow);
     }
 
     [Fact]
-    public void EvaluateLogin_RateLimitExceeded_Denies()
+    public async Task EvaluateLogin_RateLimitExceeded_Denies()
     {
         var fixture = CreateFixture(loginMaxPerWindow: 2);
         var profile = CreateProfile();
         var ip = IPAddress.Parse("203.0.113.1");
 
-        fixture.Engine.EvaluateLogin(profile, ip, "P1");
-        fixture.Engine.EvaluateLogin(profile, ip, "P2");
-        var third = fixture.Engine.EvaluateLogin(profile, ip, "P3");
+        await fixture.Engine.EvaluateLogin(profile, ip, "P1");
+        await fixture.Engine.EvaluateLogin(profile, ip, "P2");
+        var third = await fixture.Engine.EvaluateLogin(profile, ip, "P3");
 
         Assert.False(third.Allow);
     }
 
     [Fact]
-    public void EvaluateLogin_AlreadyBannedIp_DeniesImmediately()
+    public async Task EvaluateLogin_AlreadyBannedIp_DeniesImmediately()
     {
         var fixture = CreateFixture();
         var profile = CreateProfile();
         var ip = IPAddress.Parse("203.0.113.1");
         fixture.BanService.Ban(ip, "pre-existing ban");
 
-        var decision = fixture.Engine.EvaluateLogin(profile, ip, "AnyPlayer");
+        var decision = await fixture.Engine.EvaluateLogin(profile, ip, "AnyPlayer");
 
         Assert.False(decision.Allow);
     }
 
     [Fact]
-    public void EvaluateLogin_RepeatedViolations_EscalatesToFirewallBan()
+    public async Task EvaluateLogin_RepeatedViolations_EscalatesToFirewallBan()
     {
         var fixture = CreateFixture(strikesBeforeBan: 3, loginMaxPerWindow: 0); // every attempt is a rate-limit violation
         var profile = CreateProfile();
         var ip = IPAddress.Parse("203.0.113.1");
 
         for (int i = 0; i < 3; i++)
-            fixture.Engine.EvaluateLogin(profile, ip, "Attacker");
+            await fixture.Engine.EvaluateLogin(profile, ip, "Attacker");
 
         Assert.Contains(ip, fixture.Gateway.RuledAddresses);
         Assert.True(fixture.BanService.IsBanned(ip));
     }
 
     [Fact]
-    public void EvaluateLogin_RepeatedViolations_FromNeverBanIp_NeverCreatesFirewallRule()
+    public async Task EvaluateLogin_RepeatedViolations_FromNeverBanIp_NeverCreatesFirewallRule()
     {
         var fixture = CreateFixture(strikesBeforeBan: 2, loginMaxPerWindow: 0);
         var profile = CreateProfile();
         var loopback = IPAddress.Parse("127.0.0.1");
 
         for (int i = 0; i < 5; i++)
-            fixture.Engine.EvaluateLogin(profile, loopback, "Attacker");
+            await fixture.Engine.EvaluateLogin(profile, loopback, "Attacker");
 
         Assert.Empty(fixture.Gateway.RuledAddresses);
         Assert.False(fixture.BanService.IsBanned(loopback));
     }
 
     [Fact]
-    public void EvaluateLogin_BanTriggeredViaOneProfile_BlocksSameIpOnAnotherProfile()
+    public async Task EvaluateLogin_BanTriggeredViaOneProfile_BlocksSameIpOnAnotherProfile()
     {
         // FirewallBanService/StrikeTracker are shared across every profile by design (Ban/IsBanned
         // take no profile parameter) — an attacker blocked on one fronted server must not be able to
@@ -207,14 +209,73 @@ public class PolicyEngineTests
         var profileB = CreateProfile(name: "profileB");
         var ip = IPAddress.Parse("203.0.113.1");
 
-        fixture.Engine.EvaluateLogin(profileA, ip, "Attacker");
-        fixture.Engine.EvaluateLogin(profileA, ip, "Attacker");
+        await fixture.Engine.EvaluateLogin(profileA, ip, "Attacker");
+        await fixture.Engine.EvaluateLogin(profileA, ip, "Attacker");
 
         Assert.True(fixture.BanService.IsBanned(ip));
 
-        var decisionOnB = fixture.Engine.EvaluateLogin(profileB, ip, "Attacker");
+        var decisionOnB = await fixture.Engine.EvaluateLogin(profileB, ip, "Attacker");
 
         Assert.False(decisionOnB.Allow);
+    }
+
+    [Fact]
+    public async Task EvaluateLogin_IpInfoFlagsHostingIp_ProtectedUsername_DefaultScope_Denies()
+    {
+        var fixture = CreateFixture(); // default IpInfoOptions: ApplyToAllConnections = false
+        var profile = CreateProfile(vpnPolicy: VpnPolicy.BlockForProtectedUsernamesOnly);
+        var entry = new IdentityEntry { Username = "Admin" };
+        entry.StaticAllowlist.Add(CidrRange.Parse("203.0.113.0/24"));
+        profile.IdentityStore.AddOrReplace(entry);
+        var ip = IPAddress.Parse("203.0.113.5");
+        fixture.IpInfo.FlagAsHosting(ip);
+
+        var decision = await fixture.Engine.EvaluateLogin(profile, ip, "Admin");
+
+        Assert.False(decision.Allow);
+    }
+
+    [Fact]
+    public async Task EvaluateLogin_IpInfoFlagsHostingIp_UnprotectedUsername_DefaultScope_NotChecked_Allows()
+    {
+        // Default scope is protected-usernames-only — an unprotected username's connection must not
+        // even trigger the ipinfo lookup, let alone be denied by it.
+        var fixture = CreateFixture();
+        var profile = CreateProfile(vpnPolicy: VpnPolicy.BlockForEveryone);
+        var ip = IPAddress.Parse("203.0.113.5");
+        fixture.IpInfo.FlagAsHosting(ip);
+
+        var decision = await fixture.Engine.EvaluateLogin(profile, ip, "RandomPlayer");
+
+        Assert.True(decision.Allow);
+        Assert.Equal(0, fixture.IpInfo.CallCount);
+    }
+
+    [Fact]
+    public async Task EvaluateLogin_IpInfoFlagsHostingIp_ApplyToAllConnections_DeniesUnprotectedToo()
+    {
+        var fixture = CreateFixture(ipInfoOptions: new IpInfoOptions { ApplyToAllConnections = true });
+        var profile = CreateProfile(vpnPolicy: VpnPolicy.BlockForEveryone);
+        var ip = IPAddress.Parse("203.0.113.5");
+        fixture.IpInfo.FlagAsHosting(ip);
+
+        var decision = await fixture.Engine.EvaluateLogin(profile, ip, "RandomPlayer");
+
+        Assert.False(decision.Allow);
+        Assert.Equal(1, fixture.IpInfo.CallCount);
+    }
+
+    [Fact]
+    public async Task EvaluateLogin_AlreadyFlaggedByX4BNetList_SkipsIpInfoLookup()
+    {
+        var fixture = CreateFixture(ipInfoOptions: new IpInfoOptions { ApplyToAllConnections = true });
+        var profile = CreateProfile(vpnPolicy: VpnPolicy.LogOnly); // won't deny, just proves the lookup didn't happen
+        fixture.VpnIntel.UpdateVpnOnly(Ipv4RangeTable.Parse(["203.0.113.0/24"]));
+        var ip = IPAddress.Parse("203.0.113.5");
+
+        await fixture.Engine.EvaluateLogin(profile, ip, "RandomPlayer");
+
+        Assert.Equal(0, fixture.IpInfo.CallCount);
     }
 
     [Fact]
@@ -286,13 +347,13 @@ public class PolicyEngineTests
     }
 
     [Fact]
-    public void EvaluateStatusPing_RateLimitIndependentFromLogin()
+    public async Task EvaluateStatusPing_RateLimitIndependentFromLogin()
     {
         var fixture = CreateFixture(loginMaxPerWindow: 1);
         var profile = CreateProfile();
         var ip = IPAddress.Parse("203.0.113.1");
 
-        fixture.Engine.EvaluateLogin(profile, ip, "P1"); // consumes the login window
+        await fixture.Engine.EvaluateLogin(profile, ip, "P1"); // consumes the login window
         var pingDecision = fixture.Engine.EvaluateStatusPing(profile, ip);
 
         Assert.True(pingDecision.Allow);

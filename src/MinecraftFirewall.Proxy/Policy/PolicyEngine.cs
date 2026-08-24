@@ -24,10 +24,13 @@ public sealed class PolicyEngine(
     ConnectionRateLimiter rateLimiter,
     FirewallBanService banService,
     StrikeTracker strikeTracker,
+    IIpInfoClient ipInfoClient,
     IOptions<FirewallBanOptions> banOptions,
+    IOptions<IpInfoOptions> ipInfoOptions,
     ILogger<PolicyEngine> logger)
 {
     private readonly FirewallBanOptions _banOptions = banOptions.Value;
+    private readonly IpInfoOptions _ipInfoOptions = ipInfoOptions.Value;
 
     /// <summary>Checked once per connection, right after the Handshake is parsed, before the
     /// status/login branch — see HostnameMatcher for the matching rules and its important caveat
@@ -60,7 +63,7 @@ public sealed class PolicyEngine(
         return new PolicyDecision(true, "OK");
     }
 
-    public PolicyDecision EvaluateLogin(ServerProfile profile, IPAddress remoteAddress, string username)
+    public async Task<PolicyDecision> EvaluateLogin(ServerProfile profile, IPAddress remoteAddress, string username, CancellationToken ct = default)
     {
         if (banService.IsBanned(remoteAddress))
             return new PolicyDecision(false, "IP is currently firewall-banned.");
@@ -81,16 +84,30 @@ public sealed class PolicyEngine(
             return new PolicyDecision(false, $"Protected username denied: {identityDecision.Reason}");
         }
 
+        // A pending-grace-auth connection is a security-relevant identity too (it has a password),
+        // so it's treated the same as an outright-Allow for VPN/hosting-signal policy purposes.
+        bool isProtectedUsername = identityDecision.Outcome is IdentityOutcome.Allow or IdentityOutcome.AllowPendingGraceAuthentication;
+
         bool isVpnFlagged = profile.UseDatacenterList
             ? vpnIntelligence.IsKnownVpnOrDatacenter(remoteAddress)
             : vpnIntelligence.IsKnownVpn(remoteAddress);
+        string vpnFlagSource = "X4BNet VPN/datacenter list";
+
+        // Secondary, real-time signal — different provider, different mechanism (see IpInfoOptions).
+        // Only worth the network round-trip if the primary list didn't already decide this, and only
+        // in-scope per config (default: protected usernames only).
+        if (!isVpnFlagged && (_ipInfoOptions.ApplyToAllConnections || isProtectedUsername))
+        {
+            var ipInfoResult = await ipInfoClient.LookupAsync(remoteAddress, ct).ConfigureAwait(false);
+            if (ipInfoResult.LooksLikeHostingProvider)
+            {
+                isVpnFlagged = true;
+                vpnFlagSource = $"ipinfo.io ASN/org heuristic ('{ipInfoResult.AsName}')";
+            }
+        }
 
         if (isVpnFlagged)
         {
-            // A pending-grace-auth connection is a security-relevant identity too (it has a password),
-            // so it's treated the same as an outright-Allow for VPN policy purposes.
-            bool isProtectedUsername = identityDecision.Outcome is IdentityOutcome.Allow or IdentityOutcome.AllowPendingGraceAuthentication;
-
             bool shouldBlock = profile.VpnPolicy switch
             {
                 VpnPolicy.BlockForEveryone => true,
@@ -102,12 +119,12 @@ public sealed class PolicyEngine(
             if (shouldBlock)
             {
                 RegisterStrikeAndMaybeBan(remoteAddress,
-                    $"[{profile.Name}] VPN/datacenter IP denied for username '{username}'");
+                    $"[{profile.Name}] VPN/datacenter IP denied for username '{username}' (source: {vpnFlagSource})");
                 return new PolicyDecision(false, "Connection originates from a known VPN/datacenter IP.");
             }
 
-            logger.LogInformation("[{Profile}] VPN/datacenter IP {Ip} allowed (log-only policy) for username '{Username}'.",
-                profile.Name, remoteAddress, username);
+            logger.LogInformation("[{Profile}] VPN/datacenter IP {Ip} allowed (log-only policy) for username '{Username}' (source: {Source}).",
+                profile.Name, remoteAddress, username, vpnFlagSource);
         }
 
         // A clean, fully-allowed login clears any accumulated strikes for this IP — a legitimate

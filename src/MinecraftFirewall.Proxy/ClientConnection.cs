@@ -126,7 +126,7 @@ public static class ClientConnection
             return;
         }
 
-        var decision = policyEngine.EvaluateLogin(profile, remoteAddress, username);
+        var decision = await policyEngine.EvaluateLogin(profile, remoteAddress, username, hostShutdown).ConfigureAwait(false);
         if (!decision.Allow)
         {
             logger.LogInformation("[{Profile}] login denied for '{Username}' from {Ip}: {Reason}",

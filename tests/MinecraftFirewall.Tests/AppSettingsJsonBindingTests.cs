@@ -73,5 +73,17 @@ public class AppSettingsJsonBindingTests
         Assert.NotNull(config.GetSection(FirewallBanOptions.SectionName).Get<FirewallBanOptions>());
         Assert.NotNull(config.GetSection(NeverBanOptions.SectionName).Get<NeverBanOptions>());
         Assert.NotNull(config.GetSection(MessagesOptions.SectionName).Get<MessagesOptions>());
+        Assert.NotNull(config.GetSection(IpInfoOptions.SectionName).Get<IpInfoOptions>());
+    }
+
+    [Fact]
+    public void AppSettingsJson_IpInfoSection_ShipsDisabledByDefault()
+    {
+        var config = LoadConfiguration();
+        var ipInfo = config.GetSection(IpInfoOptions.SectionName).Get<IpInfoOptions>();
+
+        Assert.NotNull(ipInfo);
+        Assert.True(string.IsNullOrEmpty(ipInfo!.Token)); // no token shipped — feature is opt-in
+        Assert.False(ipInfo.ApplyToAllConnections);
     }
 }

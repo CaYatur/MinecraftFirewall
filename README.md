@@ -4,7 +4,7 @@ Windows reverse-proxy firewall for Minecraft Java Edition servers running `onlin
 protection plugins. It sits in front of the real server (which binds to `127.0.0.1` only) and decides,
 per connection, whether to forward it — without any plugin/mod inside Minecraft itself.
 
-## Status: Stage 3 of 4 (147 automated tests passing)
+## Status: Stage 3 of 4 (151 automated tests passing)
 
 This is an in-progress build. See [`docs/plan.md`](docs/plan.md) for the complete staged design doc and
 current status. What's implemented right now:
@@ -23,6 +23,11 @@ current status. What's implemented right now:
 - **VPN/datacenter IP detection** — free, MIT-licensed CIDR lists from
   [X4BNet/lists_vpn](https://github.com/X4BNet/lists_vpn), refreshed daily, cached to disk, fails open
   if the source is unreachable.
+- **Real-time secondary VPN/hosting signal (ipinfo.io)** — optional, off by default (needs a free
+  ipinfo.io token — verified empirically that one is required even for their "Lite" tier, it's not
+  keyless). Per-IP cached, fails open, scoped to protected usernames by default or every connection if
+  configured. Matches the returned ASN/organization name against a keyword list — this is a heuristic,
+  not a dedicated VPN-detection flag (that's a separate paid ipinfo product).
 - **Per-profile rate limiting** — sliding window, separate thresholds for status pings vs. login attempts.
 - **Allowed-domains restriction** — an optional per-profile allowlist of hostnames (exact or
   `*.example.com` wildcard); a connection whose Handshake Server Address doesn't match one of them is
@@ -90,6 +95,9 @@ docs/protocol/                     Sourced packet-ID reference data (Mojang's ow
      note above before relying on this for anything more than defense-in-depth.
    - Optional: edit the top-level `Messages` section to change any kick/disconnect wording, or to
      switch the shipped Turkish example block in for the English defaults.
+   - Optional: for the real-time ipinfo.io secondary signal, sign up free at
+     [ipinfo.io/signup](https://ipinfo.io/signup) and paste the token into the top-level `IpInfo`
+     section. Leave it empty to keep this signal off (default) — the X4BNet lists above still apply.
 4. Build and run:
 
 ```bash

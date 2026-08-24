@@ -39,7 +39,8 @@ public class PlayStateInspectorTests
         var banOptions = Options.Create(new FirewallBanOptions { StrikesBeforeBan = strikesBeforeBan });
         var banService = new FirewallBanService(banOptions, neverBanList, gateway, NullLogger<FirewallBanService>.Instance);
         var strikeTracker = new StrikeTracker();
-        var policyEngine = new PolicyEngine(vpnIntel, rateLimiter, banService, strikeTracker, banOptions, NullLogger<PolicyEngine>.Instance);
+        var policyEngine = new PolicyEngine(vpnIntel, rateLimiter, banService, strikeTracker, new FakeIpInfoClient(),
+            banOptions, Options.Create(new IpInfoOptions()), NullLogger<PolicyEngine>.Instance);
         return new Fixture(profile, policyEngine, gateway, banService);
     }
 

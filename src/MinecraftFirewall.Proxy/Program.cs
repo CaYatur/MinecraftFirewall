@@ -23,10 +23,12 @@ builder.Services.Configure<NeverBanOptions>(builder.Configuration.GetSection(Nev
 builder.Services.Configure<IdentityOptions>(builder.Configuration.GetSection(IdentityOptions.SectionName));
 builder.Services.Configure<DangerousCommandOptions>(builder.Configuration.GetSection(DangerousCommandOptions.SectionName));
 builder.Services.Configure<MessagesOptions>(builder.Configuration.GetSection(MessagesOptions.SectionName));
+builder.Services.Configure<IpInfoOptions>(builder.Configuration.GetSection(IpInfoOptions.SectionName));
 
 builder.Services.AddHttpClient();
 
 builder.Services.AddSingleton<VpnIntelligence>();
+builder.Services.AddSingleton<IIpInfoClient, IpInfoClient>();
 builder.Services.AddSingleton<ConnectionRateLimiter>();
 builder.Services.AddSingleton<NeverBanList>();
 builder.Services.AddSingleton<IWindowsFirewallGateway, WindowsFirewallGateway>();

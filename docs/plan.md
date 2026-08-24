@@ -9,7 +9,7 @@
   server (see the Stage 2 section below); packet IDs sourced from Mojang's own generated data report,
   not a wiki. The "hold Play-state traffic" question was decided *not* to be pursued without a real
   graphical client to test against — see the Stage 3 section for the fallback design that resulted.
-- **Stage 3 — done, 147 automated tests passing (`dotnet test`).** Compression-aware frame reading,
+- **Stage 3 — done, 151 automated tests passing (`dotnet test`).** Compression-aware frame reading,
   `ProtocolVersionRegistry` (protocol 774 populated), `PlayStateInspector` (command auditing +
   dangerous-command detection + fast-track bans), the CaYaDev-Check self-service `/register`/`/login`
   gate with grace-authentication, PBKDF2 password hashing, TTL/cap-bounded learned IPs. **Not yet done:**
@@ -38,6 +38,23 @@
   moved to being an opt-in example instead of the compiled-in default). `AppSettingsJsonBindingTests`
   loads the real shipped file through the actual config pipeline (not a fixture) specifically to catch
   a JSON/comment syntax error in that file, since nothing else ever parses it.
+- **Real-time ipinfo.io secondary VPN signal — done (Task #19).** `IpIntel/IpInfoClient.cs` (behind
+  `IIpInfoClient` so `PolicyEngine`'s tests never make a real HTTP call — see `FakeIpInfoClient`),
+  per-IP TTL-cached (default 6h — without this a login flood becomes an outbound-request flood against
+  ipinfo's rate limit), fails open on any error/timeout/missing token. `PolicyEngine.EvaluateLogin`
+  became `async Task<PolicyDecision>` to support this (was synchronous through Stage 3). **Corrected a
+  wrong premise from earlier in this project**: a live unauthenticated probe
+  (`curl https://api.ipinfo.io/lite/8.8.8.8`) returns HTTP 403 "Unknown token" — ipinfo's free Lite
+  tier requires a signup token, it is not keyless as originally assumed when ipinfo was chosen. Ships
+  disabled by default (empty `Token` in `appsettings.json` → zero outbound requests); the user must
+  sign up free and paste a token in to turn it on. Also corrected mid-build: the Lite API returns ASN
+  + organization/domain name, not a dedicated "is this a VPN" flag (that's a separate paid ipinfo
+  product) — implemented as a configurable hosting-provider keyword match against the returned org
+  name, explicitly documented as a heuristic, feeding the same `VpnPolicy` decision as the X4BNet list
+  rather than being a new independent gate. Scope defaults to protected-usernames-only, configurable to
+  every connection via `ApplyToAllConnections`, per the user's original answer to this question — and
+  the primary X4BNet list is checked first, skipping the ipinfo call entirely when it already decided
+  the outcome.
 
 **Next session should start with:** a real end-to-end run — start a local Paper server (a fresh one can
 be re-downloaded via the PaperMC Fill API; the previous one lived at `test-server/`, gitignored, and was
