@@ -25,8 +25,7 @@ public sealed class IpListRefreshService(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            await RefreshOneAsync(_options.VpnListUrl, "vpn-ipv4.txt", intelligence.UpdateVpnOnly, stoppingToken).ConfigureAwait(false);
-            await RefreshOneAsync(_options.DatacenterListUrl, "datacenter-ipv4.txt", intelligence.UpdateVpnAndDatacenter, stoppingToken).ConfigureAwait(false);
+            await RefreshNowAsync(stoppingToken).ConfigureAwait(false);
 
             try
             {
@@ -37,6 +36,14 @@ public sealed class IpListRefreshService(
                 break;
             }
         }
+    }
+
+    /// <summary>Refreshes both lists immediately, bypassing the daily timer — used at startup and by
+    /// the Admin CLI's `reload` command.</summary>
+    public async Task RefreshNowAsync(CancellationToken ct)
+    {
+        await RefreshOneAsync(_options.VpnListUrl, "vpn-ipv4.txt", intelligence.UpdateVpnOnly, ct).ConfigureAwait(false);
+        await RefreshOneAsync(_options.DatacenterListUrl, "datacenter-ipv4.txt", intelligence.UpdateVpnAndDatacenter, ct).ConfigureAwait(false);
     }
 
     private void LoadFromDiskCache(string fileName, Action<Ipv4RangeTable> update)

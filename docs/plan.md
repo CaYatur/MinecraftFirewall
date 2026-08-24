@@ -9,7 +9,7 @@
   server (see the Stage 2 section below); packet IDs sourced from Mojang's own generated data report,
   not a wiki. The "hold Play-state traffic" question was decided *not* to be pursued without a real
   graphical client to test against — see the Stage 3 section for the fallback design that resulted.
-- **Stage 3 — done, 151 automated tests passing (`dotnet test`).** Compression-aware frame reading,
+- **Stage 3 — done, 169 automated tests passing (`dotnet test`).** Compression-aware frame reading,
   `ProtocolVersionRegistry` (protocol 774 populated), `PlayStateInspector` (command auditing +
   dangerous-command detection + fast-track bans), the CaYaDev-Check self-service `/register`/`/login`
   gate with grace-authentication, PBKDF2 password hashing, TTL/cap-bounded learned IPs. **Not yet done:**
@@ -20,8 +20,49 @@
   encryption handshake + `hasJoined`, login-splice, UUID pinning). This is the feature behind the
   user's strongest original request (a genuine account permanently owning a username) and hasn't been
   built yet.
-- **Admin CLI / named pipe — not started.** `whitelist-add-me`, `list-bans`, `unban`, `require-premium`,
-  `reload` all still need the loopback pipe server + `MinecraftFirewall.Admin` console client.
+- **Admin CLI / named pipe — done (Task #18).** `Admin/AdminProtocol.cs` (a tiny newline-delimited-JSON
+  request/response contract), `Admin/AdminCommandHandler.cs` (the actual command logic, unit-testable
+  without a real pipe), `Admin/AdminPipeServer.cs` (the transport — a `BackgroundService` hosting a
+  `NamedPipeServerStream`), and `MinecraftFirewall.Admin`'s `Program.cs` (the console client). Commands:
+  `whitelist-add-me <profile> <username> <ip-or-cidr>`, `list-bans`, `unban <ip>`,
+  `require-premium <profile> <username>`, `reload`, `list-profiles`.
+  - **`whitelist-add-me` doesn't actually detect "your" IP** — corrected during design: the pipe is
+    loopback-only (see the security note below), so the only address a connection to it could ever
+    reveal is 127.0.0.1, useless for allowlisting a remote admin's real IP. It takes an explicit
+    IP/CIDR argument instead of guessing one, with the reasoning documented directly in the command's
+    own usage/help text so it isn't a silent surprise.
+  - **Security**: the pipe is created via `NamedPipeServerStreamAcl.Create` with a `PipeSecurity`
+    granting exactly one explicit Allow ACE (BuiltinAdministratorsSid, ReadWrite) — a `NamedPipeServerStream`
+    created without an explicit ACL gets Windows' default DACL, which is reachable by any local user's
+    process, not just Administrators, and would hand `unban`/`require-premium` to anyone with a session
+    on the box. Verified two ways: `AdminAclTests` inspects the constructed `PipeSecurity` directly
+    (exactly one rule, for the Administrators SID, nothing for Everyone/Authenticated Users); separately,
+    this build environment's shell was confirmed non-elevated (`WindowsPrincipal.IsInRole(Administrator)
+    == false`), so `AdminPipeServerIntegrationTests.AdministratorsOnlyAcl_NonElevatedProcess_IsRefusedConnection`
+    is a *real*, not simulated, non-admin-process rejection against the real ACL. What was **not**
+    verified: a separate OS process (as opposed to this same non-elevated test process) connecting
+    against a *running* service instance — recommended as a manual check before relying on this in
+    production (see README's honesty note on this).
+  - **Persistence**: `whitelist-add-me` and `require-premium` mutate `IdentityStore` in-memory only —
+    there is no on-disk persistence for identity records. Both commands' own response text says this
+    explicitly (not just the CLI's `--help`), since a silent "it forgot after reboot" would be a
+    security failure, not a UX wrinkle. `ProtectedUsernameConfig` gained a `RequirePremium` field
+    (`ServerProfileFactory` now sets `IdentityEntry.PremiumRequired` from it) specifically so the
+    persistent equivalent of `require-premium` actually exists in config, making the CLI's "add this to
+    appsettings.json to persist it" guidance a true, actionable statement rather than an empty promise.
+  - **`reload`'s scope is deliberately narrow** — it re-triggers `IpListRefreshService.RefreshNowAsync`
+    (a new public method extracted from the existing timer loop) to refresh the X4BNet VPN/datacenter
+    CIDR lists on demand. It does **not** reload `ServerProfiles`, ports, protected usernames, or any
+    other config section — those still require a service restart. Named `reload` (matching the
+    originally-planned command name) but documented precisely everywhere it appears so it isn't
+    mistaken for a full config reload.
+  - **Found, not fixed (flagged out of scope for this task)**: `FirewallBanService._activeBans` is
+    in-memory only, with no persistence of its own — if the service restarts while an IP has an active
+    OS-level Windows Firewall block rule, the app loses track of that ban's expiry entirely, so
+    `CleanupExpired()` can never call `Unban()` for it again. The OS firewall rule keeps blocking the IP
+    (no security regression), but it now never gets cleaned up on its own — a real, pre-existing latent
+    bug from Stage 1, unrelated to the Admin CLI itself, noted here rather than fixed inline to avoid
+    scope creep on this change.
 - **Allowed-domains restriction — done.** Per-profile `AllowedHostnames` allowlist (`Policy/HostnameMatcher.cs`
   + `PolicyEngine.EvaluateHostname`), checked right after the Handshake is parsed, before the status/login
   branch. Supports exact hostnames and `*.example.com` wildcards; a mismatch on a login attempt sends a

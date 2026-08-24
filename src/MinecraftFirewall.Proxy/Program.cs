@@ -1,4 +1,5 @@
 using MinecraftFirewall.Proxy;
+using MinecraftFirewall.Proxy.Admin;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.IpIntel;
@@ -40,8 +41,14 @@ var profileConfigs = builder.Configuration.GetSection("ServerProfiles").Get<List
 var profiles = ServerProfileFactory.Build(profileConfigs);
 builder.Services.AddSingleton<IReadOnlyList<ServerProfile>>(profiles);
 
-builder.Services.AddHostedService<IpListRefreshService>();
+// Registered as itself too (not just IHostedService) so AdminCommandHandler can call RefreshNowAsync
+// directly for the `reload` command.
+builder.Services.AddSingleton<IpListRefreshService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<IpListRefreshService>());
 builder.Services.AddHostedService<ProxyHostService>();
+
+builder.Services.AddSingleton<AdminCommandHandler>();
+builder.Services.AddHostedService<AdminPipeServer>();
 
 var host = builder.Build();
 host.Run();

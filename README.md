@@ -4,7 +4,7 @@ Windows reverse-proxy firewall for Minecraft Java Edition servers running `onlin
 protection plugins. It sits in front of the real server (which binds to `127.0.0.1` only) and decides,
 per connection, whether to forward it — without any plugin/mod inside Minecraft itself.
 
-## Status: Stage 3 of 4 (151 automated tests passing)
+## Status: Stage 3 of 4 (169 automated tests passing)
 
 This is an in-progress build. See [`docs/plan.md`](docs/plan.md) for the complete staged design doc and
 current status. What's implemented right now:
@@ -40,13 +40,18 @@ current status. What's implemented right now:
 - **Configurable, English-by-default kick messages** — every player-facing disconnect string lives in
   one `Messages` section of `appsettings.json` (English defaults, nothing hardcoded in the binary); a
   ready-to-uncomment Turkish example ships alongside it.
+- **Admin CLI** (`MinecraftFirewall.Admin`) — `whitelist-add-me`, `list-bans`, `unban`, `require-premium`,
+  `reload`, `list-profiles`, talking to the running service over a named pipe that only Administrators
+  can connect to (must be run elevated). Every mutating command is in-memory only and says so in its own
+  output — it does not survive a service restart unless you also add it to `appsettings.json`.
 
 **Not implemented yet:** admin-declared premium (real Mojang account) verification that permanently
-locks a username to its genuine owner (Stage 4 — the feature behind the strongest original request), and
-the admin CLI/named pipe (`whitelist-add-me`, `list-bans`, `unban`, `require-premium`). Also still
-outstanding: a live end-to-end run of the compiled service against a real Minecraft client, as opposed
-to the unit/integration tests (which use synthetic but protocol-verified packets) — see `docs/plan.md`
-for exactly what to run next.
+locks a username to its genuine owner (Stage 4 — the feature behind the strongest original request; the
+`require-premium` CLI command above sets the flag, but until Stage 4 ships, a `PremiumRequired` name is
+simply denied outright for everyone — no verification path exists yet). Also still outstanding: a live
+end-to-end run of the compiled service against a real Minecraft client, as opposed to the unit/
+integration tests (which use synthetic but protocol-verified packets) — see `docs/plan.md` for exactly
+what to run next.
 
 ## Honesty notes
 
@@ -69,12 +74,19 @@ for exactly what to run next.
   fronting proxy's IP ranges — then a direct-IP connection dies at the OS firewall regardless of what
   the Handshake claims. Also: if you're testing from the same machine, add `localhost` to
   `AllowedHostnames`, or you will lock out your own local connections once the list is non-empty.
+- **The Admin CLI's ACL was verified by inspecting the constructed permission set and, in this
+  project's own build environment, by confirming a genuinely non-elevated process is refused a
+  connection** (`AdminAclTests`, `AdminPipeServerIntegrationTests`). It was not additionally verified
+  by spawning a separate non-admin OS process against a *running* service — if you want that level of
+  proof before trusting it in production, test it yourself: run the service elevated, then run
+  `MinecraftFirewall.Admin.exe` from a non-elevated prompt and confirm it's refused.
 
 ## Project layout
 
 ```
 src/MinecraftFirewall.Proxy/       Windows Service — the proxy itself
-src/MinecraftFirewall.Admin/       Companion CLI (not yet implemented beyond scaffold)
+src/MinecraftFirewall.Admin/       Companion CLI — talks to the running service over an
+                                    Administrators-only named pipe (see "Admin CLI" below)
 tests/MinecraftFirewall.Tests/     xUnit tests — no real Minecraft server, no admin rights, no real firewall touched
 tools/MinecraftFirewall.ProtocolSpike/  Manual diagnostic client used to empirically verify wire behavior
                                          against a real server (see docs/plan.md Stage 2, docs/protocol/)
@@ -107,6 +119,25 @@ dotnet run --project src/MinecraftFirewall.Proxy
 
 For production use, install it as a Windows Service (`sc.exe create` or `New-Service`) running as
 Administrator so firewall bans actually take effect.
+
+## Admin CLI
+
+The service must already be running (as a service or via `dotnet run`) for the CLI to have anything to
+talk to. Run the CLI itself **elevated** — the pipe refuses non-Administrator connections outright:
+
+```bash
+dotnet run --project src/MinecraftFirewall.Admin -- list-profiles
+dotnet run --project src/MinecraftFirewall.Admin -- list-bans
+dotnet run --project src/MinecraftFirewall.Admin -- unban 203.0.113.7
+dotnet run --project src/MinecraftFirewall.Admin -- whitelist-add-me TestServer YourAdminUsername 203.0.113.7
+dotnet run --project src/MinecraftFirewall.Admin -- require-premium TestServer YourAdminUsername
+dotnet run --project src/MinecraftFirewall.Admin -- reload
+```
+
+`whitelist-add-me` and `require-premium` change in-memory state only — the command's own output says so.
+To make either permanent, add it to that server's `ProtectedUsernames` in `appsettings.json` (the latter
+via `"RequirePremium": true`) and restart the service. `reload` only refreshes the VPN/datacenter IP
+lists on demand; it does not re-read `ServerProfiles` or anything else — that still needs a restart.
 
 ## Tests
 

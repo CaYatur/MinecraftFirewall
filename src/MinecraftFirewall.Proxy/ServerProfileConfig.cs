@@ -20,6 +20,10 @@ public sealed class ProtectedUsernameConfig
 {
     public string Username { get; set; } = "";
     public List<string> AllowedIps { get; set; } = [];
+
+    /// <summary>Admin-declared only, never auto-set — see IdentityGate's precedence rule and Stage 4
+    /// in docs/plan.md. Persists a `require-premium` Admin CLI change across a service restart.</summary>
+    public bool RequirePremium { get; set; }
 }
 
 public static class ServerProfileFactory
@@ -43,7 +47,7 @@ public static class ServerProfileFactory
 
             foreach (var protectedUsername in config.ProtectedUsernames)
             {
-                var entry = new IdentityEntry { Username = protectedUsername.Username };
+                var entry = new IdentityEntry { Username = protectedUsername.Username, PremiumRequired = protectedUsername.RequirePremium };
                 foreach (var ip in protectedUsername.AllowedIps)
                     entry.StaticAllowlist.Add(CidrRange.Parse(ip));
 
