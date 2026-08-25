@@ -36,6 +36,16 @@ public class ServerForwardingSetupTests : IDisposable
         return _root;
     }
 
+    /// <summary>Writes the bytes exactly as given, so a test about line endings is not undone by the
+    /// helper that set it up.</summary>
+    private string WritePaperRaw(string body)
+    {
+        string dir = Path.Combine(_root, "config");
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, "paper-global.yml"), System.Text.Encoding.UTF8.GetBytes(body));
+        return _root;
+    }
+
     private string WriteSpigot(string body)
     {
         File.WriteAllText(Path.Combine(_root, "spigot.yml"), body);
@@ -155,6 +165,41 @@ public class ServerForwardingSetupTests : IDisposable
 
         string[] changed = [.. before.Zip(after).Where(p => p.First != p.Second).Select(p => p.Second)];
         Assert.Equal(["  proxy-protocol: true"], changed);
+    }
+
+    [Fact]
+    public void EveryOtherByteInTheFileIsIdentical()
+    {
+        // Stronger than counting lines, and it had to be: the first version of this compared line
+        // arrays and passed, while actually rewriting all 144 line endings in a real Paper config.
+        // Paper writes LF, Windows writes CRLF, and ReadAllLines/WriteAllLines quietly converts. The
+        // file parses either way, but "one line changes" has to be true, and a diff full of noise is
+        // a diff nobody reads.
+        string directory = WritePaperRaw(
+            "proxies:\n  bungee-cord:\n    online-mode: true\n  proxy-protocol: false\n  velocity:\n    enabled: false\n");
+
+        string path = Path.Combine(directory, "config", "paper-global.yml");
+        string before = File.ReadAllText(path);
+
+        var setup = new ServerForwardingSetup();
+        Assert.True(setup.Apply(setup.Plan(Server(directory), enable: true)).Success);
+
+        Assert.Equal(
+            before.Replace("proxy-protocol: false", "proxy-protocol: true"),
+            File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void ACarriageReturnOnTheChangedLineIsKeptToo()
+    {
+        // And a file that really is CRLF stays CRLF, including on the line that changed.
+        string directory = WritePaperRaw("proxies:\r\n  proxy-protocol: false\r\n");
+        string path = Path.Combine(directory, "config", "paper-global.yml");
+
+        var setup = new ServerForwardingSetup();
+        Assert.True(setup.Apply(setup.Plan(Server(directory), enable: true)).Success);
+
+        Assert.Equal("proxies:\r\n  proxy-protocol: true\r\n", File.ReadAllText(path));
     }
 
     [Fact]

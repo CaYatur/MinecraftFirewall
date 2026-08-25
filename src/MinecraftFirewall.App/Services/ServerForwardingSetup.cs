@@ -91,7 +91,14 @@ public sealed class ServerForwardingSetup
 
         try
         {
-            string[] lines = File.ReadAllLines(path);
+            // Read and written as raw text, split on newlines only. ReadAllLines/WriteAllLines would
+            // rewrite every line ending in the file to this machine's — Paper writes LF, Windows
+            // writes CRLF — so a change of one value would show up as a change to all 144 lines. The
+            // file parses either way, but "one line changes" has to actually be true, and a diff full
+            // of noise is a diff nobody reads.
+            string original = File.ReadAllText(path);
+            string[] lines = original.Split('\n');
+
             int index = FindKeyLine(lines, ParentOf(path), KeyOf(path));
 
             if (index < 0)
@@ -101,8 +108,9 @@ public sealed class ServerForwardingSetup
             // without needing this application to do it for them.
             File.Copy(path, path + ".mcfirewall-backup", overwrite: true);
 
-            lines[index] = proposed;
-            File.WriteAllLines(path, lines);
+            // Whatever this particular line ended with, it still ends with.
+            lines[index] = lines[index].EndsWith('\r') ? proposed + "\r" : proposed;
+            File.WriteAllText(path, string.Join('\n', lines));
 
             return (true,
                 $"Set in {path}. Restart your Minecraft server for it to take effect — until then it keeps " +
@@ -122,7 +130,8 @@ public sealed class ServerForwardingSetup
         string[] lines;
         try
         {
-            lines = File.ReadAllLines(path);
+            // Split the same way the write does, so the plan and the edit agree on what a line is.
+            lines = File.ReadAllText(path).Split('\n');
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -138,7 +147,7 @@ public sealed class ServerForwardingSetup
                 "rather than having this application guess where to add it.");
         }
 
-        string current = lines[index];
+        string current = lines[index].TrimEnd('\r');
         bool alreadyEnabled = current.TrimEnd().EndsWith("true", StringComparison.OrdinalIgnoreCase);
 
         string indent = current[..(current.Length - current.TrimStart().Length)];
