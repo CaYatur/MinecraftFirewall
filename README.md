@@ -37,7 +37,8 @@ server-port=25566
 > your server directly. Once you have done it, the control panel's **Security check** page will
 > confirm it for you — it genuinely tries to connect, rather than taking your word for it.
 
-**3.** Open the control panel, go to **Servers**, and point it at your server:
+**3.** Open the control panel, go to **Servers**, and point it at your server. VPN policy, protected
+usernames and allowed domains are all here, per server:
 
 <p align="center">
   <img src="docs/images/screens/servers.png" alt="The Servers page: name, public port, real server address and port, protected usernames, and allowed domains" width="820">
@@ -109,6 +110,10 @@ English and Turkish, switchable without restarting — every page, not just the 
 </p>
 
 <p align="center">
+  <img src="docs/images/screens/servers-turkish.png" alt="The Servers page rendered in Turkish" width="820">
+</p>
+
+<p align="center">
   <img src="docs/images/screens/settings.png" alt="The Settings page with English and Turkish language options, start-up mode, and optional features" width="820">
 </p>
 
@@ -152,6 +157,33 @@ client produces them by playing.
 during the learning window becomes part of the baseline. Switch it on at a quiet time. It never
 refuses anyone, and there is no setting to change that: what it detects is "unlike your other
 connections", which is not the same claim as "malicious".
+
+### Accounts and passwords (CaYaDev-Check)
+
+The AuthMe equivalent, built into the proxy rather than into your server. Two modes:
+
+**Off (default).** Any player can type `/register <password>` to protect their own name; everyone else
+plays exactly as before. Opt-in, per player.
+
+**On.** Nobody reaches your world until they have an account. A player joins and is **held still** —
+movement, hitting, placing, item use and container clicks are refused and never reach your server.
+Only chat gets through, which is how they type the command. They are prompted on arrival and reminded
+periodically, because Minecraft chat scrolls.
+
+```
+/register <password>    → first time
+/login <password>       → afterwards, from a new address
+```
+
+Keep-alives keep flowing while a player is frozen, so your server does not time them out while they
+read the prompt. Once they authenticate, their address is remembered and they are not asked again from
+it.
+
+**Premium-locked names skip the whole thing.** Their Microsoft account has already proved who they
+are; asking for a password on top would mean making the real owner prove themselves twice, which is
+the one thing this firewall promises never to do.
+
+Switch it on from the Protection page, or set `Identity.RequireRegistrationForEveryone`.
 
 ### Server-indexing crawlers
 
@@ -291,7 +323,7 @@ nothing at all.
 | Feature | What it's for |
 |---|---|
 | 🔐 **Premium account lock** | Bind a username to its real Microsoft account, on an offline-mode server. |
-| 🧾 **CaYaDev-Check** | Self-service `/register` and `/login` for any player. PBKDF2 hashed, remembers known IPs so nobody is nagged twice. |
+| 🧾 **CaYaDev-Check** | AuthMe-style accounts. Optional server-wide: nobody reaches your world until they register or log in. PBKDF2 hashed, remembers known IPs so nobody is nagged twice. |
 | 📋 **Protected usernames** | Pin a name to specific IPs or CIDR ranges. Unknown IP is a hard refusal. |
 | 🌐 **VPN & datacenter blocking** | Free MIT-licensed IP lists, refreshed daily, cached to disk. Optional real-time ipinfo.io lookup on top. |
 | 🚪 **Allowed domains** | Only accept players arriving through your domain — IP-scanning bots get nothing. |
@@ -344,6 +376,7 @@ apply.
 | `VpnIntel` / `IpInfo` | VPN list sources; optional ipinfo.io token for the real-time signal. |
 | `RateLimit` / `FirewallBan` / `NeverBan` | Thresholds, ban duration, and IPs that can never be banned. |
 | `Alerts` | Discord webhook URL and which events to report. Off until you add a URL. |
+| `Identity` | Server-wide registration, password rules, how long a known address stays trusted. |
 | `DdosProtection` | Per-address, per-subnet and overall connection limits, and the defensive mode. |
 | `BotDefense` | Signal weights and whether a high score reports or refuses. |
 | `DeepInspection` | Packet size and rate caps, injection scanning, movement analysis. |

@@ -185,7 +185,7 @@
                                             <CheckBox Content="{loc:T ChkDatacenter}" Margin="0,9,0,0"
                                                       IsChecked="{Binding UseDatacenterList, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
 
-                                            <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T FieldAllowedDomains}"/>
+                                            <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T FieldAllowedDomains}" Margin="0,16,0,0"/>
                                             <TextBox Text="{Binding AllowedHostnamesText, UpdateSourceTrigger=PropertyChanged}"
                                                      AcceptsReturn="True" MinHeight="48" TextWrapping="NoWrap"
                                                      VerticalScrollBarVisibility="Auto" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12"/>
