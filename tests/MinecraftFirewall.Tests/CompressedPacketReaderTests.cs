@@ -62,6 +62,75 @@ public class CompressedPacketReaderTests
         Assert.Equal<byte>(frameBytes, packet.RawFrame);
     }
 
+    [Fact]
+    public async Task ReadAsync_DecompressionBomb_RefusedWithoutAllocatingTheBomb()
+    {
+        // 32 MiB of zeros deflates to a few dozen kilobytes — comfortably inside any sane frame-size
+        // cap. Before the bounded inflate, this frame inflated to completion (allocating all 32 MiB)
+        // and only then compared lengths, so a handful of these from one unauthenticated client was
+        // enough to take the service down. Nothing here should ever allocate more than the declared
+        // dataLength.
+        byte[] bomb = new byte[32 * 1024 * 1024];
+        byte[] compressed = Deflate(bomb);
+
+        Assert.True(compressed.Length < 64 * 1024, "the bomb must stay small on the wire, or it proves nothing");
+
+        // Declare a modest size so the frame looks entirely ordinary from its header.
+        byte[] frameBytes = BuildCompressedFrame(dataLength: 512, compressed);
+        using var stream = new MemoryStream(frameBytes);
+
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            CompressedPacketReader.ReadAsync(stream, maxFrameSize: 2 * 1024 * 1024, CancellationToken.None));
+
+        Assert.Contains("decompression bomb", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ReadAsync_DeclaredLengthAboveTheCap_RejectedBeforeAllocating()
+    {
+        // The other half of the same attack: the declared length is itself attacker-chosen, so a frame
+        // claiming it inflates to 2 GB must be refused on the claim alone. Allocating the buffer to
+        // find out is the denial of service.
+        byte[] frameBytes = BuildCompressedFrame(dataLength: int.MaxValue, Deflate([0x00]));
+        using var stream = new MemoryStream(frameBytes);
+
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            CompressedPacketReader.ReadAsync(stream, maxFrameSize: 4096, CancellationToken.None));
+
+        Assert.Contains("outside the allowed range", ex.Message);
+    }
+
+    [Fact]
+    public async Task ReadAsync_HonoursATighterCallerSuppliedCap()
+    {
+        byte[] inner = [.. VarInt.Encode(0x01), .. new byte[4096]];
+        byte[] frameBytes = BuildCompressedFrame(inner.Length, Deflate(inner));
+        using var stream = new MemoryStream(frameBytes);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            CompressedPacketReader.ReadAsync(stream, maxFrameSize: 8192, CancellationToken.None, maxUncompressedSize: 1024));
+    }
+
+    [Fact]
+    public async Task ReadAsync_LegitimateFrameAtExactlyTheCap_StillDecodes()
+    {
+        // The guard must bound the bomb without clipping a frame that genuinely is that big.
+        const int cap = 4096;
+        byte[] fields = new byte[cap - 1]; // + 1 byte of packet ID = exactly `cap`
+        new Random(7).NextBytes(fields);
+        byte[] inner = [.. VarInt.Encode(0x09), .. fields];
+
+        Assert.Equal(cap, inner.Length);
+
+        byte[] frameBytes = BuildCompressedFrame(inner.Length, Deflate(inner));
+        using var stream = new MemoryStream(frameBytes);
+
+        var packet = await CompressedPacketReader.ReadAsync(stream, maxFrameSize: 65536, CancellationToken.None, maxUncompressedSize: cap);
+
+        Assert.Equal(0x09, packet.PacketId);
+        Assert.Equal<byte>(fields, packet.Fields);
+    }
+
     private static byte[] BuildUncompressedFrame(int packetId, byte[] fields)
     {
         byte[] inner = [.. VarInt.Encode(packetId), .. fields];
