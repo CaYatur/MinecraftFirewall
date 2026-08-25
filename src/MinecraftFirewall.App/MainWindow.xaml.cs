@@ -150,6 +150,7 @@ public partial class MainWindow : Window
         if (page == "Defense")
         {
             LoadDefenseSettings();
+            PluginStatusText.Text = Strings.Current["PluginNotChecked"];
             _ = RefreshDefenseAsync();
         }
 
@@ -370,6 +371,10 @@ public partial class MainWindow : Window
             // config written before it existed would otherwise show unticked while the service was
             // happily enforcing it.
             ChkMalformed.IsChecked = _config.GetBool(["DeepInspection", "RefuseMalformedPackets"], true);
+
+            // Defaults to true when absent, like the option it mirrors: it ships on, and a config
+            // written before it existed would otherwise show unticked while the service used it.
+            ChkUsePlugin.IsChecked = _config.GetBool(["Identity", "UseServerPlugin"], true);
             ChkHoneypot.IsChecked = _config.GetBool(["Honeypot", "Enabled"], false);
             ChkMovement.IsChecked = _config.GetBool(["DeepInspection", "AnalyseMovement"], false);
             ChkMovementKick.IsChecked = _config.GetBool(["DeepInspection", "KickOnMovementAnomaly"], false);
@@ -1019,5 +1024,96 @@ public partial class MainWindow : Window
 
         if (_selectedPlayer is { } still)
             await LoadPlayerDetailAsync(still);
+    }
+
+    // ------------------------------------------------------------------ the optional server plugin
+    //
+    // The one thing the firewall cannot do from outside the server is stop a held player being hurt.
+    // This is the part that goes inside. Installing it writes a file into somebody else's software,
+    // which is the most intrusive thing this application ever does — so it is the thing that asks
+    // most carefully, and shows the exact path before it touches anything.
+
+    private readonly PluginInstaller _plugin = new();
+    private PluginInstallPlan? _pluginPlan;
+
+    private void BtnCheckPlugin_Click(object sender, RoutedEventArgs e) => CheckPlugin();
+
+    private void CheckPlugin()
+    {
+        (List<ServerProfileEdit> profiles, _) = _config.Load();
+
+        if (profiles.Count == 0)
+        {
+            PluginStatusText.Text = "  No servers are configured yet.";
+            _pluginPlan = null;
+            return;
+        }
+
+        // The first profile's backend, because that is the server this panel can actually locate: the
+        // inspector finds it by matching the port in a server.properties, and a port is what a profile
+        // has. A machine fronting several servers gets told which one this looked at.
+        BackendServerInfo server = new BackendServerInspector().Inspect(profiles[0].BackendPort);
+        _pluginPlan = _plugin.Plan(server);
+
+        var lines = new List<string>
+        {
+            $"  Server for '{profiles[0].Name}' (port {profiles[0].BackendPort}): " +
+            (server.Directory ?? "could not be located"),
+            $"  {_pluginPlan.Explanation}",
+        };
+
+        if (_pluginPlan is { Possible: true, AlreadyInstalled: true })
+            lines.Add("  Installed. Your held players are protected from damage and kept in place.");
+
+        PluginStatusText.Text = string.Join(Environment.NewLine, lines);
+    }
+
+    private void BtnInstallPlugin_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pluginPlan is null)
+            CheckPlugin();
+
+        if (_pluginPlan is not { Possible: true, TargetPath: { } target })
+        {
+            Toast(_pluginPlan?.Explanation ?? Strings.Current["PluginNotChecked"], ok: false);
+            return;
+        }
+
+        // The exact absolute path, in the question. The server folder is found by a heuristic, and a
+        // heuristic that is wrong here writes a file somewhere nobody meant — so what is approved is
+        // that path, not the idea of installing.
+        MessageBoxResult answer = MessageBox.Show(
+            string.Format(Strings.Current["PluginConfirmFormat"], target),
+            Strings.Current["PluginConfirmTitle"], MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+        if (answer != MessageBoxResult.Yes)
+            return;
+
+        (bool success, string message) = _plugin.Install(_pluginPlan);
+        Toast(message, success);
+        CheckPlugin();
+    }
+
+    private void BtnRemovePlugin_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pluginPlan is null)
+            CheckPlugin();
+
+        if (_pluginPlan is not { TargetPath: { } target })
+        {
+            Toast(Strings.Current["PluginNotChecked"], ok: false);
+            return;
+        }
+
+        MessageBoxResult answer = MessageBox.Show(
+            string.Format(Strings.Current["PluginRemoveConfirmFormat"], target),
+            Strings.Current["ConfirmTitle"], MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+        if (answer != MessageBoxResult.Yes)
+            return;
+
+        (bool success, string message) = _plugin.Uninstall(_pluginPlan);
+        Toast(message, success);
+        CheckPlugin();
     }
 }

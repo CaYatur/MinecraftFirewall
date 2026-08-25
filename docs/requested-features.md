@@ -8,7 +8,11 @@ and has not been, and a few items cannot be done from where this software sits.
 This file says which is which, item by item. It exists because a security product that quietly leaves
 half a list unimplemented while claiming the whole list is worse than one that never claimed it.
 
-Legend: **✅ done** · **➕ added in 1.7.0** · **🔨 feasible, not built** · **🚫 not possible here**
+Legend: **✅ done** · **➕ added since 1.7.0** · **🔨 feasible, not built** · **🚫 not possible here**
+
+> **Since 1.7.2 there is an optional server plugin**, and it moves the line. Several things below were
+> impossible *from a proxy* and are simply possible from inside the server. Where that applies, it
+> says so. The plugin is optional, tiny, and everything works without it.
 
 ---
 
@@ -85,6 +89,12 @@ coordinates as well.
 Everything else on that list is **🔨 feasible only in part, and honestly quite weakly**, for one
 reason that does not go away: **a proxy cannot see the world.**
 
+The optional plugin does not change this, and is deliberately not allowed to. It could see the world
+— that is the whole point of being inside the server — but the moment it started reporting block
+positions back, this project would have started building the shadow world model rejected below, in a
+place where it is even harder to reason about. The plugin protects held players and declares the
+login commands. It has no opinion about anybody's movement.
+
 - **Flight** requires knowing whether there is a block underneath the player. This process has no
   world data, and a legitimate elytra, boat, ice, ladder, slime block, levitation effect or plugin
   teleport all look identical from here.
@@ -99,7 +109,31 @@ reason that does not go away: **a proxy cannot see the world.**
 
 An anti-cheat that acts on guesses about a world it cannot see would kick legitimate players, and the
 kicks would look random to everyone including the administrator. The place for the rest of this list
-is a plugin with access to the server's own state — and this firewall does not stop you running one.
+is a plugin with access to the server's own state — a real one, of the kind people already run, not the
+forty-line bridge shipped here. This firewall does not stop you running one, and nothing it does
+conflicts with one.
+
+---
+
+## Damage to a player held at the login prompt
+
+**➕ Solved in 1.7.2, by the optional plugin.** Until then this was the clearest example of something
+a proxy simply cannot do: the player really is standing in the world, and only the server decides
+their health. Nothing the firewall refuses or rewrites changes that.
+
+The plugin is the part that is inside the server, so it can. While somebody is held it cancels every
+damage event that names them — mobs, falling, drowning, the void, fire — and stops them starving,
+and keeps the world from pushing them anywhere. Without the plugin the behaviour is unchanged: the
+firewall notices the damage and disconnects them before they die, which costs a reconnect instead of
+an inventory.
+
+It also declares `/login`, `/register` and `/premium` as real commands, which is what makes them
+render blue instead of red and appear in `/help`. That is a plugin.yml declaration and nothing more:
+the firewall still answers all three before the server sees them.
+
+The plugin never decides anything. Who is held, and for how long, is the firewall's judgement alone.
+A plugin that decided for itself would be a second implementation of the login rules, free to
+disagree with the first.
 
 ---
 

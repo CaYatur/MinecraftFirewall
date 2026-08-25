@@ -61,7 +61,16 @@ foreach ($project in $projects) {
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed for $project" }
 }
 
-foreach ($required in @('MinecraftFirewall.exe', 'MinecraftFirewall.Proxy.exe', 'appsettings.json')) {
+# The optional server plugin. Shipped beside the app rather than downloaded later, so that offering
+# to install it is a file copy the control panel can always make — a feature that needs the internet
+# at the moment somebody clicks it is a feature that fails on the machines that need it most.
+Write-Host "Building the server plugin" -ForegroundColor Cyan
+& (Join-Path $repoRoot 'plugin/build.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'The server plugin failed to build.' }
+
+Copy-Item (Join-Path $repoRoot 'plugin/build/MinecraftFirewallBridge.jar') $publishTo -Force
+
+foreach ($required in @('MinecraftFirewall.exe', 'MinecraftFirewall.Proxy.exe', 'appsettings.json', 'MinecraftFirewallBridge.jar')) {
     if (-not (Test-Path (Join-Path $publishTo $required))) {
         throw "Publish output is missing $required — the installer would produce a broken install."
     }

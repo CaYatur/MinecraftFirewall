@@ -1,5 +1,6 @@
 using System.Net;
 using MinecraftFirewall.Proxy.Anomaly;
+using MinecraftFirewall.Proxy.Bridge;
 using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.Inspection;
 using MinecraftFirewall.Proxy.Messages;
@@ -97,6 +98,15 @@ public sealed class PlayStateInspector(
     /// carrying the backend's replies is writing to the same socket at the same time.</summary>
     private Stream? _clientWriter;
 
+    /// <summary>Where the proxy writes when it speaks to the optional server plugin. Distinct from
+    /// the client writer because the two travel in opposite directions: a plugin message to the
+    /// server is serverbound, and goes out the same way the player's own packets do.</summary>
+    private Stream? _backendWriter;
+
+    /// <summary>Set once the plugin has been told to hold this player, so it is told exactly once and
+    /// released exactly once.</summary>
+    private bool _pluginHolding;
+
     /// <summary>When the player entered Play state still needing to authenticate. The timeout is
     /// measured from here rather than from the connection opening, because loading the world can take
     /// a while and none of that time is the player ignoring a prompt they have not seen yet.</summary>
@@ -189,6 +199,7 @@ public sealed class PlayStateInspector(
     {
         _startedAt = _now();
         _clientWriter = clientStream;
+        _backendWriter = backendStream;
 
         while (!ct.IsCancellationRequested)
         {
@@ -333,6 +344,19 @@ public sealed class PlayStateInspector(
                     RemindToAuthenticate();
                     continue; // swallowed: never reaches the server
                 }
+            }
+
+            // Dropped before anything else looks at it, and unconditionally — this is not an
+            // inspection setting, it is the boundary the plugin bridge rests on. The plugin cannot
+            // tell a message the firewall injected from one a player sent, so it must never see one a
+            // player sent: otherwise anyone could tell it to freeze anyone, or to release themselves.
+            if (packet.PacketId == packetIds.PlayCustomPayloadServerbound &&
+                PluginBridge.IsBridgeChannel(packet.Fields))
+            {
+                logger.LogWarning("[{Profile}] '{Username}' ({Ip}) tried to speak to the server plugin directly. " +
+                                  "Dropped — only this firewall may use that channel.",
+                    profile.Name, username, remoteAddress);
+                continue;
             }
 
             bool isChat = packet.PacketId == packetIds.PlayChatServerbound;
@@ -909,6 +933,8 @@ public sealed class PlayStateInspector(
     {
         bool registering = graceAuth!.NeedsRegistration;
 
+        AskPluginToHold();
+
         SendToPlayer(registering ? messages.RegistrationPrompt : messages.LoginPrompt);
 
         // Only while registering. Somebody logging in already has a password; somebody choosing one
@@ -1004,6 +1030,7 @@ public sealed class PlayStateInspector(
     private void ReleaseHold()
     {
         _hold.Released = true;
+        TellPluginToRelease();
 
         // Cleared rather than left to time out: the prompt was given a long stay so it would not blink
         // out while they read it, and that same length would otherwise hang over the game afterwards.
@@ -1019,6 +1046,57 @@ public sealed class PlayStateInspector(
         WriteToClient(() => FrameWriter.WritePlayerPositionFrame(
             packetIds.PlayPlayerPositionClientbound, packetIds.PositionLayout,
             position.X, position.Y, position.Z, position.Yaw, position.Pitch, teleportId, _compression.Threshold));
+    }
+
+    /// <summary>
+    /// Asks the optional server plugin to protect this player while they are held.
+    ///
+    /// Fire-and-forget, and nothing waits for an answer. A server without the plugin ignores the
+    /// message the way it ignores any unknown channel, which is exactly why nothing the player sees
+    /// is allowed to depend on this — the prompt has already been sent by the time this runs.
+    /// </summary>
+    private void AskPluginToHold()
+    {
+        if (!identityOptions.UseServerPlugin || _pluginHolding)
+            return;
+
+        _pluginHolding = true;
+        WriteToBackend(() => PluginBridge.BuildHold(packetIds.PlayCustomPayloadServerbound, _compression.Threshold));
+    }
+
+    /// <summary>Tells the plugin the player is an ordinary player again. Only sent if it was told to
+    /// hold them in the first place, so a server that never heard the first message never hears an
+    /// unexplained second one.</summary>
+    private void TellPluginToRelease()
+    {
+        if (!_pluginHolding)
+            return;
+
+        _pluginHolding = false;
+        WriteToBackend(() => PluginBridge.BuildRelease(packetIds.PlayCustomPayloadServerbound, _compression.Threshold));
+    }
+
+    /// <summary>
+    /// Sends something to the backend that the player did not send.
+    ///
+    /// The only packets that ever go this way are the plugin bridge's own, and they are advisory: a
+    /// server that never receives one simply behaves as it did before the plugin existed. So a
+    /// failure here is logged and forgotten rather than allowed to disturb the connection.
+    /// </summary>
+    private void WriteToBackend(Func<byte[]> build)
+    {
+        Stream? writer = _backendWriter;
+        if (writer is null || !_compression.Established)
+            return;
+
+        try
+        {
+            writer.WriteAsync(build()).AsTask().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[{Profile}] could not reach the server plugin for '{Username}'.", profile.Name, username);
+        }
     }
 
     /// <summary>

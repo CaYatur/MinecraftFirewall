@@ -95,4 +95,20 @@ public sealed class IdentityOptions
     /// and that first announcement is the baseline; damage is a decrease from it.
     /// </summary>
     public float DamageDisconnectMinimumDrop { get; set; } = 0.5f;
+
+    /// <summary>
+    /// Whether the firewall tells its optional server plugin to protect a held player.
+    ///
+    /// On by default, and harmless when the plugin is not installed: the instruction is a plugin
+    /// message on a channel nothing else listens to, and a server without the plugin ignores it
+    /// exactly as it ignores every other unknown channel. Nothing waits for a reply, and no message
+    /// the player sees depends on the plugin being there — so a server with it and a server without
+    /// it behave identically apart from the one thing only the plugin can do.
+    ///
+    /// That one thing is the reason it exists. A firewall in front of a server cannot stop a creeper;
+    /// the player really is standing in the world and only the server decides their health. With the
+    /// plugin, they cannot be hurt at all while they read the prompt. Without it, the best available
+    /// is to notice and disconnect them before they die.
+    /// </summary>
+    public bool UseServerPlugin { get; set; } = true;
 }

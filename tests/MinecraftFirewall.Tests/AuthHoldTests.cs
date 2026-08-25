@@ -419,11 +419,17 @@ public class AuthHoldTests
         var compression = new ConnectionCompression();
         compression.UseThreshold(Threshold);
 
+        // Off for these. They assert byte-for-byte that nothing the player sent reached the server,
+        // and the plugin bridge writes its own packets into that same stream — which would turn a
+        // precise assertion into an approximate one. The bridge has its own tests.
+        IdentityOptions options = identity ?? new IdentityOptions();
+        options.UseServerPlugin = false;
+
         var inspector = new PlayStateInspector(
             profile ?? TestProfile(), "Steve", Player, ids,
             grace ?? new GraceAuthRequirement(new IdentityEntry { Username = "Steve" }, null),
             startsTrusted: false,
-            identity ?? new IdentityOptions(), [], messages,
+            options, [], messages,
             DefenseTestFactory.CreatePolicyEngine(banService, banOptions: new FirewallBanOptions { StrikesBeforeBan = 100 }),
             new InspectionOptions(), NullLogger.Instance, hold, compression);
 

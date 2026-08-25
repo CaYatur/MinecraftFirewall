@@ -104,8 +104,14 @@ public class RegistrationGateTests
 
         var policy = DefenseTestFactory.CreatePolicyEngine(banService, banOptions: new FirewallBanOptions { StrikesBeforeBan = 100 });
 
+        // Off for these. They assert byte-for-byte that nothing the player sent reached the server,
+        // and the plugin bridge writes its own packets into that same stream — which would turn a
+        // precise assertion into an approximate one. The bridge has its own tests.
+        IdentityOptions options = identity ?? new IdentityOptions { PasswordMinLength = 6 };
+        options.UseServerPlugin = false;
+
         var inspector = new PlayStateInspector(profile, "Steve", Player, Ids, grace, startsTrusted: false,
-            identity ?? new IdentityOptions { PasswordMinLength = 6 }, [], new MessagesOptions(), policy,
+            options, [], new MessagesOptions(), policy,
             new InspectionOptions(), NullLogger.Instance);
 
         return new Harness(inspector, new MemoryStream());

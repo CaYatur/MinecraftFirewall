@@ -91,6 +91,22 @@ public sealed class Strings : INotifyPropertyChanged
         ["ChkMalformed"] =
             "Refuse packets a real client could not send (bad interaction types, impossible coordinates, " +
             "trailing bytes) — this is what PacketFixer-style plugins do, but before the server parses them",
+        ["PluginHeading"] = "Server plugin (optional)",
+        ["PluginBlurb"] =
+            "A firewall in front of your server cannot stop a creeper: a player waiting at the login prompt is " +
+            "really standing in your world, and only the server decides their health. This small plugin is the " +
+            "part that is inside, so it can. It also makes /login, /register and /premium real commands, so they " +
+            "show in blue and appear in /help. Everything works without it.",
+        ["ChkUsePlugin"] = "Use the plugin when it is installed (harmless when it is not)",
+        ["BtnCheckPlugin"] = "Check my server",
+        ["BtnInstallPlugin"] = "Install into my server",
+        ["BtnRemovePlugin"] = "Remove it",
+        ["PluginNotChecked"] = "  Press \u201CCheck my server\u201D to see where this would go.",
+        ["PluginConfirmTitle"] = "Install the plugin?",
+        ["PluginConfirmFormat"] =
+            "This will copy a file into your Minecraft server:\n\n{0}\n\nNothing else is changed, and your " +
+            "server must be restarted before it loads. Continue?",
+        ["PluginRemoveConfirmFormat"] = "Delete this file?\n\n{0}",
         ["NavPlayers"] = "Players",
         ["PlayersHeading"] = "Players this server knows",
         ["PlayersBlurb"] =
@@ -345,6 +361,22 @@ public sealed class Strings : INotifyPropertyChanged
             "Gerçek bir istemcinin gönderemeyeceği paketleri reddet (hatalı etkileşim türleri, imkânsız " +
             "koordinatlar, artık baytlar) — PacketFixer tarzı eklentilerin yaptığı iş, ama sunucu paketi " +
             "çözümlemeden önce",
+        ["PluginHeading"] = "Sunucu eklentisi (isteğe bağlı)",
+        ["PluginBlurb"] =
+            "Sunucunun önündeki bir güvenlik duvarı creeper'ı durduramaz: giriş ekranında bekleyen oyuncu " +
+            "gerçekten dünyanızda duruyordur ve canını yalnızca sunucu belirler. Bu küçük eklenti içeride " +
+            "çalışan kısımdır, bu yüzden durdurabilir. Ayrıca /login, /register ve /premium komutlarını gerçek " +
+            "komutlara dönüştürür; mavi görünürler ve /help içinde çıkarlar. Eklenti olmadan da her şey çalışır.",
+        ["ChkUsePlugin"] = "Kuruluysa eklentiyi kullan (kurulu değilse zararsızdır)",
+        ["BtnCheckPlugin"] = "Sunucumu denetle",
+        ["BtnInstallPlugin"] = "Sunucuma kur",
+        ["BtnRemovePlugin"] = "Kaldır",
+        ["PluginNotChecked"] = "  Nereye kurulacağını görmek için \u201CSunucumu denetle\u201D düğmesine basın.",
+        ["PluginConfirmTitle"] = "Eklenti kurulsun mu?",
+        ["PluginConfirmFormat"] =
+            "Minecraft sunucunuza bir dosya kopyalanacak:\n\n{0}\n\nBaşka hiçbir şey değişmez ve yüklenmesi " +
+            "için sunucunuzu yeniden başlatmanız gerekir. Devam edilsin mi?",
+        ["PluginRemoveConfirmFormat"] = "Bu dosya silinsin mi?\n\n{0}",
         ["NavPlayers"] = "Oyuncular",
         ["PlayersHeading"] = "Bu sunucunun tanıdığı oyuncular",
         ["PlayersBlurb"] =

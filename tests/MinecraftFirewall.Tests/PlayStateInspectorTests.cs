@@ -19,7 +19,16 @@ public class PlayStateInspectorTests
 {
     private static readonly PlayStatePacketIds Ids = GetIds();
     private static readonly IPAddress RemoteIp = IPAddress.Parse("203.0.113.1");
-    private static readonly IdentityOptions DefaultIdentityOptions = new() { LearnedIpTtl = TimeSpan.FromDays(30), MaxLearnedIpsPerUsername = 5, PasswordMinLength = 4 };
+    // UseServerPlugin off: these assert byte-for-byte what reached the server, and the plugin bridge
+    // writes its own packets into that same stream — which would turn a precise assertion into an
+    // approximate one. The bridge has its own tests.
+    private static readonly IdentityOptions DefaultIdentityOptions = new()
+    {
+        LearnedIpTtl = TimeSpan.FromDays(30),
+        MaxLearnedIpsPerUsername = 5,
+        PasswordMinLength = 4,
+        UseServerPlugin = false,
+    };
     private static readonly string[] DangerousCommands = ["op", "ban", "stop"];
     private static readonly MessagesOptions Messages = new();
 

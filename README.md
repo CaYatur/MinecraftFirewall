@@ -398,6 +398,7 @@ nothing at all.
 | 👤 **Player management** | Per server: who registered and when, when they were last seen, from where, and the itemised reasons that address looks suspicious. Reset a password, forget trusted addresses, lock or unlock a name, remove it. |
 | 🧬 **Real player IPs** | PROXY protocol or BungeeCord-style forwarding, so your server log and your plugins see the player rather than 127.0.0.1. |
 | 🧱 **Malformed packet refusal** | What PacketFixer-style plugins do, a step earlier — before the server's own decoder sees the packet. |
+| 🧩 **Optional server plugin** | Four kilobytes, installed for you from the Protection page. Makes held players untouchable, and turns the login commands into real ones that show in blue and in `/help`. |
 | 🔁 **Self-updating version support** | A Minecraft version this build has never seen is learned at runtime, checked against every table it already has, and used without anyone being asked to do anything. |
 
 ---
@@ -518,12 +519,44 @@ without a slash, so nothing renders as an error, and a player can change their o
 with `changepassword <current> <new>` — the current one is required even from a trusted address,
 because a household shares an address.
 
-Damage is the one this cannot fix outright, and the reason is worth stating: a firewall in front of a
-server cannot stop a creeper. The player really is standing in the world and only the server decides
-their health. What it can do is notice — so a held player who starts taking damage is disconnected
-before they die. A kick costs them a reconnect; a death costs them their inventory.
+Damage is the one a proxy cannot fix by itself, and the reason is worth stating: a firewall in front
+of a server cannot stop a creeper. The player really is standing in the world and only the server
+decides their health. Without help, the best available is to notice — so a held player who starts
+taking damage is disconnected before they die, which costs a reconnect instead of an inventory.
+
+**With the optional plugin, it is fixed properly.** See below.
 
 Every line of it is configurable, including the on-screen title.
+
+---
+
+## The optional server plugin
+
+There is one thing a firewall in front of a server cannot do, and it is the thing people notice: stop
+a held player being hurt. This is the part that goes inside the server, so it can.
+
+The **Protection** page will find your server and install it for you — it shows you the exact path
+first and writes nothing until you approve that path. It is about four kilobytes, compiled against
+the Minecraft 1.8 API using only calls that have existed since then, so one file works on every
+version this firewall supports and on versions that do not exist yet. The source is in
+[`plugin/`](plugin/), and it is short enough to read in a couple of minutes.
+
+With it installed, a player waiting at the login prompt:
+
+- **cannot be hurt at all** — not by mobs, falling, drowning, the void, fire, or hunger
+- **cannot be moved** by anything in the world
+- sees `/login`, `/register` and `/premium` **in blue, as real commands**, and finds them in `/help`
+  — which is where somebody works out how to claim their name
+
+Everything works without it. Nothing waits for it, no message depends on it, and a server that does
+not have it behaves exactly as it did before it existed. Turn it off entirely with
+`Identity.UseServerPlugin`.
+
+**The plugin never decides anything.** Who is held, and for how long, is the firewall's judgement
+alone; the plugin holds whoever it is told to hold. Instructions travel on the player's own
+connection and the format has no field for a name, so a message cannot be aimed at anybody else —
+and the firewall refuses to forward anything a client sends on that channel, so the only thing that
+can talk to the plugin is the firewall.
 
 ---
 
@@ -554,11 +587,11 @@ There is a longer, item-by-item version in **[docs/requested-features.md](docs/r
 every capability that has been asked of this project, marked as already present, added, feasible but
 not built, or not possible from where this software sits — with the reason in each case.
 
-- **A firewall in front of a server cannot stop mob damage.** A player held at the login prompt is
-  genuinely standing in your world, and only the server decides their health — nothing this proxy
-  refuses or rewrites changes that. It notices and disconnects them before they die, which is the
-  best a thing outside the server can do. If you want them not to be in the world at all, that needs
-  a plugin inside it.
+- **A firewall in front of a server cannot stop mob damage by itself.** A player held at the login
+  prompt is genuinely standing in your world, and only the server decides their health. Without the
+  optional plugin, the best available is to notice and disconnect them before they die. With it, they
+  cannot be hurt at all — which is exactly why the plugin exists, and why it is the only part of this
+  project that runs inside your server.
 - **The anti-bot risk figures score an address, not a person.** One address carries several names, and
   the Players page says so where it shows them. Nothing here correlates alt accounts; presenting an
   address score as a player score would quietly imply that it did.
