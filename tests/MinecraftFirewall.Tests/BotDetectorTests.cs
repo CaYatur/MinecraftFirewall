@@ -141,6 +141,45 @@ public class BotDetectorTests
     }
 
     [Fact]
+    public void WhatThePanelIsToldMatchesWhatTheLogPrints()
+    {
+        // Explain and Assess score the same address from the same history, and they are two pieces of
+        // code. That is a drift waiting to happen — and it very nearly happened on the day Explain
+        // was written, which reached for two option names that do not exist and had to have the real
+        // threshold and weight copied across by hand.
+        //
+        // The invariant is containment, not equality: Explain reports what is *remembered* about an
+        // address, while Assess adds what this particular connection looks like. So everything Explain
+        // says must appear in Assess, with the same name and the same weight. If a threshold or a
+        // weight is ever tuned in one and not the other, the Players page starts showing a different
+        // number than the log prints and nobody finds out.
+        using BotDetector detector = DefenseTestFactory.CreateBotDetector();
+
+        for (int i = 0; i < 3; i++)
+        {
+            detector.RecordHostnameMismatch(Player, HostnameMismatchKind.ForeignDomain);
+            detector.RecordHandshakeWithoutLogin(Player);
+        }
+
+        // Explained first: Assess deliberately records the connection it is scoring, and asking the
+        // question must not change the answer.
+        IReadOnlyList<BotSignal> explained = detector.Explain(Player);
+        BotAssessment assessed = AssessNormalJoin(detector);
+
+        Assert.NotEmpty(explained);
+
+        foreach (BotSignal signal in explained)
+        {
+            BotSignal[] matches = [.. assessed.Signals.Where(s => s.Name == signal.Name)];
+            Assert.True(matches.Length == 1,
+                $"the Players page reports '{signal.Name}' but a real assessment produces {matches.Length} of them");
+
+            Assert.True(matches[0].Weight == signal.Weight,
+                $"'{signal.Name}' is worth {signal.Weight} on the Players page and {matches[0].Weight} in the log");
+        }
+    }
+
+    [Fact]
     public void ConnectingByRawIpIsNotAHostnameMismatchAtAll()
     {
         // Found by reading a live server's log, not by testing. Somebody given the address instead of
