@@ -13,7 +13,10 @@ public static class LoginDisconnect
 {
     public static byte[] BuildPacket(string reasonText)
     {
-        string json = JsonSerializer.Serialize(new { text = reasonText });
+        // Stripped rather than applied. This packet carries JSON, not the NBT components the Play
+        // state uses, and a formatting code left in it is not rendered — it is shown, character for
+        // character, in the middle of the sentence explaining why somebody was refused.
+        string json = JsonSerializer.Serialize(new { text = TextColour.Strip(reasonText) });
         byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
 
         byte[] idBytes = VarInt.Encode(0x00);

@@ -207,8 +207,18 @@ public sealed class PlayerAdmin(IReadOnlyList<ServerProfile> profiles, BotDetect
             : $"Removed '{entry.Username}'. They will be treated as a new player on their next join.");
     }
 
-    /// <summary>Locks a name to a verified Minecraft account, or unlocks it. See the warning in the
-    /// reply: this one field is deliberately not persisted, because appsettings.json owns it.</summary>
+    /// <summary>
+    /// Locks a name to a verified Minecraft account, or unlocks it.
+    ///
+    /// Persisted, unlike the configuration-declared form of the same setting. A lock established here
+    /// is a runtime decision with nothing to rebuild it, so losing it on restart failed OPEN: the name
+    /// went back to being usable by anyone, and the UUID pin recorded against it sat unused, because a
+    /// pin is only ever consulted while the name is currently locked.
+    ///
+    /// A name ALSO declared in appsettings.json is a different matter — the file is rebuilt on every
+    /// start, so unlocking here without editing the file only lasts until the next one. The reply says
+    /// so rather than letting somebody discover it a week later.
+    /// </summary>
     public AdminResponse SetPremium(string[] args)
     {
         if (args.Length != 3 || !bool.TryParse(args[2], out bool required))
@@ -219,16 +229,22 @@ public sealed class PlayerAdmin(IReadOnlyList<ServerProfile> profiles, BotDetect
 
         IdentityEntry entry = profile.IdentityStore.GetOrCreate(args[1]);
         entry.PremiumRequired = required;
+
+        // Recorded as a runtime lock so it survives a restart. Without this the button was a promise
+        // that expired the next time the service came up, and it expired by failing OPEN — the name
+        // became usable by anyone again rather than merely being denied.
+        entry.PremiumLockedAtRuntime = required;
         entry.Record(required ? PlayerEventKind.PremiumVerified : PlayerEventKind.Denied, null,
             required ? "an administrator locked this name to its Minecraft account"
                      : "an administrator unlocked this name", DateTimeOffset.UtcNow);
 
         return new AdminResponse(true, required
-            ? $"'{entry.Username}' now requires a verified Minecraft account. This is the one setting that does NOT " +
-              "survive a restart: add \"RequirePremium\": true under that profile's ProtectedUsernames in " +
-              "appsettings.json, or the name silently becomes usable by anyone again on the next restart."
-            : $"'{entry.Username}' no longer requires a verified Minecraft account. If it is set in appsettings.json, " +
-              "remove it there too — otherwise the next restart puts it back.");
+            ? $"'{entry.Username}' now requires a verified Minecraft account, and that survives a restart. " +
+              "Only the account that answers Mojang's challenge for this name can use it from now on, from any " +
+              "address, and it is never asked for a password."
+            : $"'{entry.Username}' no longer requires a verified Minecraft account. If it is also set in " +
+              "appsettings.json, remove it there too — configuration is rebuilt on every start, so the file " +
+              "would put it back.");
     }
 
     /// <summary>

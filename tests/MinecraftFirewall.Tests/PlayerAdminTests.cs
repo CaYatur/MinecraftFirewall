@@ -221,18 +221,34 @@ public class PlayerAdminTests
     }
 
     [Fact]
-    public void LockingANameToAnAccountWarnsThatItDoesNotSurviveARestart()
+    public void LockingANameToAnAccountSurvivesARestart()
     {
-        // The one setting whose loss fails OPEN rather than closed: the name becomes usable by anyone
-        // again, rather than simply being denied. It has already bitten once, on the CLI.
+        // It did not, and that failed OPEN: the name went back to being usable by anyone rather than
+        // merely being denied, and the UUID pin recorded against it sat unused, because a pin is only
+        // ever consulted while the name is currently locked. Reported from a live server as "premium
+        // login looks enabled but is off".
         (PlayerAdmin admin, ServerProfile profile) = Create();
 
         AdminResponse response = admin.SetPremium(["EkipSurvival", "Owner", "true"]);
 
         Assert.True(response.Success);
-        Assert.True(profile.IdentityStore.Find("Owner")!.PremiumRequired);
-        Assert.Contains("does NOT", response.Message, StringComparison.Ordinal);
-        Assert.Contains("RequirePremium", response.Message, StringComparison.Ordinal);
+
+        IdentityEntry locked = profile.IdentityStore.Find("Owner")!;
+        Assert.True(locked.PremiumRequired);
+        Assert.True(locked.PremiumLockedAtRuntime, "a lock made at runtime has to be marked for persistence");
+    }
+
+    [Fact]
+    public void UnlockingClearsTheRuntimeLockRatherThanLeavingItToComeBack()
+    {
+        (PlayerAdmin admin, ServerProfile profile) = Create();
+
+        admin.SetPremium(["EkipSurvival", "Owner", "true"]);
+        admin.SetPremium(["EkipSurvival", "Owner", "false"]);
+
+        IdentityEntry entry = profile.IdentityStore.Find("Owner")!;
+        Assert.False(entry.PremiumRequired);
+        Assert.False(entry.PremiumLockedAtRuntime);
     }
 
     [Fact]

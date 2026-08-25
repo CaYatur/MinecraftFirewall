@@ -31,8 +31,26 @@ public sealed class PlayStateInspector(
     InspectionOptions inspection,
     ILogger logger,
     AuthHold? authHold = null,
+    ConnectionCompression? compression = null,
     Func<DateTimeOffset>? clock = null)
 {
+    /// <summary>
+    /// What this connection negotiated for compression, learned by the pump carrying the backend's
+    /// side and read here by everything that writes to the player.
+    ///
+    /// Nothing is written before it is known. Waiting costs nothing — every message this class sends
+    /// belongs to Play state, which is strictly after the backend has finished deciding — whereas
+    /// guessing means a coin flip on whether the client accepts the frame or drops the connection.
+    /// </summary>
+    private readonly ConnectionCompression _compression = compression ?? NoCompressionNegotiated();
+
+    private static ConnectionCompression NoCompressionNegotiated()
+    {
+        var none = new ConnectionCompression();
+        none.UseNoCompression();
+        return none;
+    }
+
     /// <summary>
     /// The state shared with the pump carrying the backend's side of this connection.
     ///
@@ -140,7 +158,7 @@ public sealed class PlayStateInspector(
         InspectionOptions inspection,
         ILogger logger)
         : this(profile, username, remoteAddress, packetIds, graceAuth, startsTrusted, identityOptions,
-               dangerousCommands, messages, policyEngine, inspection, logger, null, null)
+               dangerousCommands, messages, policyEngine, inspection, logger, null, null, null)
     {
     }
 
@@ -912,7 +930,7 @@ public sealed class PlayStateInspector(
             packetIds.PlayTitleAnimationClientbound,
             packetIds.PlayTitleTextClientbound,
             packetIds.PlaySubtitleTextClientbound,
-            title, subtitle, stayTicks));
+            title, subtitle, stayTicks, _compression.Threshold));
     }
 
     /// <summary>
@@ -943,7 +961,7 @@ public sealed class PlayStateInspector(
         WriteToClient(() => FrameWriter.WritePlayerPositionFrame(
             packetIds.PlayPlayerPositionClientbound, packetIds.PositionLayout,
             identityOptions.LockPositionX, identityOptions.LockPositionY, identityOptions.LockPositionZ,
-            yaw: 0f, pitch: 0f, teleportId));
+            yaw: 0f, pitch: 0f, teleportId, _compression.Threshold));
     }
 
     /// <summary>The leading VarInt, or -1 if it cannot be read. Only used to match a confirmation
@@ -1000,7 +1018,7 @@ public sealed class PlayStateInspector(
 
         WriteToClient(() => FrameWriter.WritePlayerPositionFrame(
             packetIds.PlayPlayerPositionClientbound, packetIds.PositionLayout,
-            position.X, position.Y, position.Z, position.Yaw, position.Pitch, teleportId));
+            position.X, position.Y, position.Z, position.Yaw, position.Pitch, teleportId, _compression.Threshold));
     }
 
     /// <summary>
@@ -1053,7 +1071,7 @@ public sealed class PlayStateInspector(
     /// </summary>
     private void SendToPlayer(string text)
     {
-        WriteToClient(() => FrameWriter.WriteSystemChatFrame(packetIds.PlaySystemChatClientbound, text));
+        WriteToClient(() => FrameWriter.WriteSystemChatFrame(packetIds.PlaySystemChatClientbound, text, _compression.Threshold));
     }
 
     /// <summary>
@@ -1071,6 +1089,16 @@ public sealed class PlayStateInspector(
         Stream? writer = _clientWriter;
         if (writer is null)
             return;
+
+        // Held back rather than guessed at. A frame encoded for the wrong compression setting is not
+        // ignored by the client, it disconnects it — so a message that arrives a moment late is
+        // strictly better than one that arrives wrong.
+        if (!_compression.Established)
+        {
+            logger.LogDebug("[{Profile}] not speaking to '{Username}' yet — the connection has not " +
+                            "finished negotiating compression.", profile.Name, username);
+            return;
+        }
 
         try
         {

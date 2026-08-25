@@ -85,40 +85,60 @@ public sealed class AuthHold
 }
 
 /// <summary>
-/// Reads the backend's half of a held connection, one packet at a time, for as long as the player is
-/// waiting to authenticate.
+/// Carries the backend's half of a connection, reading only as much of it as the proxy actually needs.
 ///
-/// This exists for exactly two things the proxy cannot learn any other way: where the backend has
-/// placed the player, and whether they are being hurt while they stand there unable to defend
-/// themselves. Once the hold is released it stops decoding entirely and the caller goes back to a
-/// plain byte copy — an authenticated player's connection should not pay for a login feature.
+/// It needs two things, and they are needed at different times. First, always: the compression
+/// threshold the backend chooses during login, because every packet the proxy composes has to be
+/// encoded for it and getting that wrong disconnects the player rather than being ignored. Second,
+/// only while somebody is waiting at the login prompt: where the backend has placed them, and whether
+/// something is hurting them while they stand there.
 ///
-/// Large frames are forwarded without being decoded at all. Chunk data runs to hundreds of kilobytes
-/// and inflating every one of them to look for a forty-byte position packet would make joining a
-/// server measurably slower for no benefit.
+/// Three phases, and the phase decides how a frame is read — explicitly, rather than by trying one
+/// format and catching the failure. Login frames carry no declared-length field at all; frames after
+/// Set Compression do. Reading one as the other does not fail loudly, it silently misreads, and this
+/// class is forwarding every byte the player receives while it works.
+///
+/// Once there is nothing left to learn it stops decoding entirely and becomes a plain copy. An
+/// authenticated player's session should not pay for a login feature.
 /// </summary>
-public sealed class ClientboundAuthWatcher(
+public sealed class ClientboundRelay(
     PlayStatePacketIds packetIds,
-    AuthHold hold,
+    ConnectionCompression compression,
+    AuthHold? hold,
     Action<PlayerPosition> onPosition,
     Action<float> onHealth,
     int maxFrameBytes)
 {
-    /// <summary>Frames larger than this are passed through unopened. Everything this watcher looks
-    /// for is a few dozen bytes; anything big is chunk, entity or inventory data.</summary>
+    /// <summary>Frames larger than this are passed through unopened. Everything this looks for is a
+    /// few dozen bytes; anything big is chunk, entity or inventory data, and inflating it to look for
+    /// a forty-byte position packet would make joining measurably slower for no benefit.</summary>
     private const int DecodeCeiling = 4096;
+
+    // Login-state clientbound ids. Part of the fixed pre-play protocol, unchanged for many years,
+    // which is why they are named here rather than looked up per version.
+    private const int LoginSuccess = 0x02;
+    private const int SetCompression = 0x03;
 
     public async Task RunAsync(Stream backendStream, Stream clientStream, CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested && !hold.Released)
+        bool inLoginPhase = true;
+
+        while (!ct.IsCancellationRequested)
         {
+            if (!inLoginPhase && (hold is null || hold.Released))
+                break;
+
             Frame frame = await FrameReader.ReadFrameAsync(backendStream, maxFrameBytes, ct).ConfigureAwait(false);
             await clientStream.WriteAsync(frame.Raw, ct).ConfigureAwait(false);
 
-            if (frame.Raw.Length > DecodeCeiling)
+            if (inLoginPhase)
+            {
+                inLoginPhase = !ReadLoginFrame(frame);
                 continue;
+            }
 
-            Inspect(frame);
+            if (frame.Raw.Length <= DecodeCeiling)
+                InspectPlayFrame(frame);
         }
 
         // Whatever is left is somebody else's to carry. Nothing is buffered here — every frame is read
@@ -127,8 +147,57 @@ public sealed class ClientboundAuthWatcher(
             await backendStream.CopyToAsync(clientStream, 81920, ct).ConfigureAwait(false);
     }
 
-    private void Inspect(Frame frame)
+    /// <summary>
+    /// Reads one login-phase frame. Returns true once the login phase is over.
+    ///
+    /// Set Compression is the packet worth waiting for, and Login Success is the one that ends the
+    /// phase. A backend that never sends the first still sends the second, which is how "compression
+    /// is off" gets established rather than assumed.
+    /// </summary>
+    private bool ReadLoginFrame(Frame frame)
     {
+        try
+        {
+            // Before Set Compression the frame is [length][packetId][fields] with no declared length;
+            // after it, the compressed form applies. The flag decides which, rather than a guess.
+            if (compression.Established)
+            {
+                DecodedPacket decoded = CompressedPacketReader.Decode(frame);
+                return decoded.PacketId == LoginSuccess;
+            }
+
+            ReadOnlySpan<byte> payload = frame.Payload;
+            int packetId = VarInt.Decode(payload, out int idLength);
+
+            if (packetId == SetCompression)
+            {
+                int threshold = VarInt.Decode(payload[idLength..], out _);
+                compression.UseThreshold(threshold);
+                return false; // Login Success still follows, now compressed
+            }
+
+            if (packetId == LoginSuccess)
+            {
+                compression.UseNoCompression();
+                return true;
+            }
+
+            return false;
+        }
+        catch (Exception ex) when (ex is InvalidDataException or ArgumentOutOfRangeException or IndexOutOfRangeException)
+        {
+            // Already forwarded verbatim. A login frame this cannot read is not a reason to interfere
+            // with a connection that is otherwise working — it only means the proxy stays quiet, since
+            // nothing is sent until the threshold is known.
+            return false;
+        }
+    }
+
+    private void InspectPlayFrame(Frame frame)
+    {
+        if (hold is null)
+            return;
+
         DecodedPacket packet;
         try
         {
@@ -136,8 +205,8 @@ public sealed class ClientboundAuthWatcher(
         }
         catch (Exception ex) when (ex is InvalidDataException or ArgumentOutOfRangeException or IndexOutOfRangeException)
         {
-            // Already forwarded verbatim. Failing to read something the proxy only wants to observe is
-            // never a reason to interfere with a connection that is otherwise working.
+            // Already forwarded. Failing to read something the proxy only wants to observe is never a
+            // reason to interfere with a working connection.
             return;
         }
 

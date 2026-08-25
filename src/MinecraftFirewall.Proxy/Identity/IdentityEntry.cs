@@ -47,9 +47,25 @@ public sealed class IdentityEntry
     // Stage 3
     public string? PasswordHash { get; set; }
 
-    // Stage 4 — admin-declared only, never auto-set by observing traffic (see docs/plan.md's
-    // "explicitly rejected" note on auto-probing).
+    // Stage 4. Set from configuration, or earned at runtime by an account proving it owns the name —
+    // never auto-set by merely observing traffic (see docs/plan.md's "explicitly rejected" note on
+    // auto-probing).
     public bool PremiumRequired { get; set; }
+
+    /// <summary>
+    /// True when this lock was established while the firewall was running rather than declared in
+    /// configuration — either because an account answered the encryption challenge for this name, or
+    /// because an administrator locked it from the control panel.
+    ///
+    /// The distinction decides what survives a restart, and getting it wrong fails OPEN. Configuration
+    /// owns the locks an administrator declared, so those are rebuilt from the file and deliberately
+    /// not persisted here — otherwise a stale cache would quietly overrule the file they edited. But
+    /// nothing rebuilds a lock a player earned. It was called permanent when it was granted, and
+    /// without this flag it lasted until the next restart, after which the name was open to anyone
+    /// again and the UUID pin recorded for it sat unused, because the pin is only ever consulted while
+    /// the name is currently locked.
+    /// </summary>
+    public bool PremiumLockedAtRuntime { get; set; }
 
     /// <summary>
     /// Set when the player holding this name has asked, and confirmed, that it be locked to their

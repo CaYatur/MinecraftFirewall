@@ -28,6 +28,13 @@ public class AuthHoldTests
 {
     private static readonly IPAddress Player = IPAddress.Parse("203.0.113.61");
 
+    /// <summary>The compression threshold these tests pretend the backend negotiated.
+    ///
+    /// It has to be a real one rather than "off", because the two produce different frame layouts and
+    /// everything here reads the proxy's output back with the compressed-frame reader. Vanilla's
+    /// default, so the frames are the shape a real connection produces.</summary>
+    private const int Threshold = 256;
+
     private static PlayStatePacketIds IdsFor(int protocol)
     {
         Assert.True(ProtocolVersionRegistry.TryGet(protocol, out PlayStatePacketIds ids));
@@ -51,12 +58,12 @@ public class AuthHoldTests
 
         byte[] frame = FrameWriter.WritePlayerPositionFrame(
             ids.PlayPlayerPositionClientbound, ids.PositionLayout,
-            x: 1234.5, y: -64.25, z: -9876.75, yaw: 90.5f, pitch: -12.25f, teleportId: 0x4000_0001);
+            x: 1234.5, y: -64.25, z: -9876.75, yaw: 90.5f, pitch: -12.25f, teleportId: 0x4000_0001, compressionThreshold: Threshold);
 
         DecodedPacket decoded = CompressedPacketReader.Decode(ToFrame(frame));
         Assert.Equal(ids.PlayPlayerPositionClientbound, decoded.PacketId);
 
-        PlayerPosition? read = ClientboundAuthWatcher.TryReadPosition(decoded.Fields, ids.PositionLayout);
+        PlayerPosition? read = ClientboundRelay.TryReadPosition(decoded.Fields, ids.PositionLayout);
 
         Assert.NotNull(read);
         Assert.Equal(1234.5, read.Value.X);
@@ -72,8 +79,8 @@ public class AuthHoldTests
         // Guards against the layout switch quietly becoming a no-op. If a refactor made both branches
         // emit the same bytes, every test above would still pass and one whole band of versions would
         // silently break.
-        byte[] older = FrameWriter.WritePlayerPositionFrame(0x40, PositionLayout.TeleportIdLast, 1, 2, 3, 0, 0, 7);
-        byte[] newer = FrameWriter.WritePlayerPositionFrame(0x40, PositionLayout.TeleportIdFirst, 1, 2, 3, 0, 0, 7);
+        byte[] older = FrameWriter.WritePlayerPositionFrame(0x40, PositionLayout.TeleportIdLast, 1, 2, 3, 0, 0, 7, Threshold);
+        byte[] newer = FrameWriter.WritePlayerPositionFrame(0x40, PositionLayout.TeleportIdFirst, 1, 2, 3, 0, 0, 7, Threshold);
 
         Assert.NotEqual(older, newer);
     }
@@ -94,7 +101,7 @@ public class AuthHoldTests
             .. RelativeFlags(0x1F),
         ];
 
-        Assert.Null(ClientboundAuthWatcher.TryReadPosition(fields, ids.PositionLayout));
+        Assert.Null(ClientboundRelay.TryReadPosition(fields, ids.PositionLayout));
     }
 
     [Fact]
@@ -102,8 +109,8 @@ public class AuthHoldTests
     {
         // This side of the connection is observed, never filtered. A packet the proxy cannot read is
         // still a packet the client is entitled to receive.
-        Assert.Null(ClientboundAuthWatcher.TryReadPosition([1, 2, 3], PositionLayout.TeleportIdFirst));
-        Assert.Null(ClientboundAuthWatcher.TryReadPosition([1, 2, 3], PositionLayout.TeleportIdLast));
+        Assert.Null(ClientboundRelay.TryReadPosition([1, 2, 3], PositionLayout.TeleportIdFirst));
+        Assert.Null(ClientboundRelay.TryReadPosition([1, 2, 3], PositionLayout.TeleportIdLast));
     }
 
     // ---- teleport ids ------------------------------------------------------------------------------
@@ -407,13 +414,18 @@ public class AuthHoldTests
         var banService = new FirewallBanService(banOptions, new NeverBanList(Options.Create(new NeverBanOptions())),
             new FakeWindowsFirewallGateway(), new RecordingAlertSender(), NullLogger<FirewallBanService>.Instance);
 
+        // Established, because the inspector deliberately says nothing at all until the backend has
+        // announced a threshold — a frame encoded for the wrong one disconnects the client.
+        var compression = new ConnectionCompression();
+        compression.UseThreshold(Threshold);
+
         var inspector = new PlayStateInspector(
             profile ?? TestProfile(), "Steve", Player, ids,
             grace ?? new GraceAuthRequirement(new IdentityEntry { Username = "Steve" }, null),
             startsTrusted: false,
             identity ?? new IdentityOptions(), [], messages,
             DefenseTestFactory.CreatePolicyEngine(banService, banOptions: new FirewallBanOptions { StrikesBeforeBan = 100 }),
-            new InspectionOptions(), NullLogger.Instance, hold);
+            new InspectionOptions(), NullLogger.Instance, hold, compression);
 
         return new Harness(inspector, new MemoryStream(), ids);
     }
@@ -474,7 +486,7 @@ public class AuthHoldTests
 
             DecodedPacket packet = CompressedPacketReader.Decode(ToFrame(remaining[..(prefix + length)].ToArray()));
             if (packet.PacketId == harness.Ids.PlayPlayerPositionClientbound &&
-                ClientboundAuthWatcher.TryReadPosition(packet.Fields, harness.Ids.PositionLayout) is { } position)
+                ClientboundRelay.TryReadPosition(packet.Fields, harness.Ids.PositionLayout) is { } position)
             {
                 positions.Add(position);
             }

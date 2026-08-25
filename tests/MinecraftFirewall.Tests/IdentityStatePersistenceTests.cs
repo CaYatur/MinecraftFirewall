@@ -243,4 +243,69 @@ public class IdentityStatePersistenceTests : IDisposable
         Assert.Contains("second", File.ReadAllText(FilePath), StringComparison.Ordinal);
         Assert.Empty(Directory.GetFiles(_tempDirectory, "*.tmp"));
     }
+
+    [Fact]
+    public void APremiumLockEarnedAtRuntimeSurvivesARestart()
+    {
+        // The promise made to the player, in those words, is that only their account can ever use the
+        // name again. Before this it lasted until the next restart and then failed OPEN — the name was
+        // open to anyone, and the genuine owner was asked for a password they had been told they would
+        // never need. Reported from a live server.
+        var before = new ServerProfile { Name = "p", PublicPort = 1, BackendHost = "127.0.0.1", BackendPort = 2 };
+        IdentityEntry claimed = before.IdentityStore.GetOrCreate("Owner");
+        claimed.PremiumRequired = true;
+        claimed.PremiumLockedAtRuntime = true;
+        claimed.TryClaimOrMatchPinnedUuid(Guid.Parse("4d3cf08f-a08a-4e5f-af8a-da3a3ddbfb1b"));
+
+        var persistence = new IdentityStatePersistence(NullLogger<IdentityStatePersistence>.Instance);
+        string path = Path.Combine(Path.GetTempPath(), $"mcfw-premium-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            persistence.Save(persistence.Serialize([before]), path);
+
+            var after = new ServerProfile { Name = "p", PublicPort = 1, BackendHost = "127.0.0.1", BackendPort = 2 };
+            persistence.Load([after], path);
+
+            IdentityEntry restored = after.IdentityStore.Find("Owner")!;
+            Assert.True(restored.PremiumRequired, "the lock itself has to come back, not just a note that one existed");
+            Assert.True(restored.PremiumLockedAtRuntime);
+
+            // And the pin with it — a pin is only consulted while the name is locked, so one without
+            // the other is a pin that sits there doing nothing.
+            Assert.Equal(Guid.Parse("4d3cf08f-a08a-4e5f-af8a-da3a3ddbfb1b"), restored.PinnedUuid);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ALockThatOnlyConfigurationDeclaredIsNotPersisted()
+    {
+        // The other half of the rule, and the reason this distinction exists at all. Configuration is
+        // rebuilt on every start and owns what it declares; a cached copy would mean an administrator
+        // removing a name from the file no longer actually removes it.
+        var before = new ServerProfile { Name = "p", PublicPort = 1, BackendHost = "127.0.0.1", BackendPort = 2 };
+        IdentityEntry declared = before.IdentityStore.GetOrCreate("FromConfig");
+        declared.PremiumRequired = true; // as ServerProfileFactory sets it, with no runtime flag
+
+        var persistence = new IdentityStatePersistence(NullLogger<IdentityStatePersistence>.Instance);
+        string path = Path.Combine(Path.GetTempPath(), $"mcfw-config-{Guid.NewGuid():N}.json");
+
+        try
+        {
+            persistence.Save(persistence.Serialize([before]), path);
+
+            var after = new ServerProfile { Name = "p", PublicPort = 1, BackendHost = "127.0.0.1", BackendPort = 2 };
+            persistence.Load([after], path);
+
+            Assert.False(after.IdentityStore.Find("FromConfig")?.PremiumRequired ?? false);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }

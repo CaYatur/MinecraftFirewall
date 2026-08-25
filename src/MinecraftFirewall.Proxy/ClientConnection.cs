@@ -323,10 +323,16 @@ public static class ClientConnection
                 // backend has put them, and only the inspector knows when they have authenticated.
                 var authHold = new AuthHold();
 
+                // Learned from the backend's own Set Compression, never assumed. Every packet the
+                // proxy composes has to be encoded for the threshold this connection negotiated, and
+                // a frame encoded for the wrong one disconnects the client rather than being ignored.
+                var compressionState = new ConnectionCompression();
+
                 var inspector = new PlayStateInspector(
                     profile, username, remoteAddress, packetIds, decision.GraceAuth,
                     startsTrusted: decision.GraceAuth is null,
-                    identityOptions, dangerousCommands, messages, policyEngine, inspection, logger, authHold)
+                    identityOptions, dangerousCommands, messages, policyEngine, inspection, logger,
+                    authHold, compressionState)
                 {
                     // Only when the player asked for it and the challenge actually pinned the name.
                     // Announcing it for an ordinary auto-claim would be confusing: nobody asked.
@@ -334,11 +340,11 @@ public static class ClientConnection
                 };
 
                 await PumpWithInspectionAsync(client, clientIo, backendStream, inspector, packetIds,
-                    // The backend's side is only decoded while somebody is actually being held. An
-                    // authenticated player's connection should not pay for a login feature, so once
-                    // the hold is released the pump goes back to being a plain byte copy.
+                    // The hold is only watched for while somebody is actually being held; the login
+                    // phase is always read, because the threshold it carries is needed either way.
+                    // Once there is nothing left to learn the relay becomes a plain byte copy.
                     decision.GraceAuth is not null ? authHold : null,
-                    inspection, hostShutdown).ConfigureAwait(false);
+                    compressionState, inspection, hostShutdown).ConfigureAwait(false);
 
                 // After the session, not during it. What the model learns from is the shape of a whole
                 // conversation — how long it lasted, how it was paced, what mix of packets it carried —
@@ -350,6 +356,14 @@ public static class ClientConnection
                 await PumpBothWaysAsync(clientIo, backendStream, hostShutdown).ConfigureAwait(false);
             }
         }
+        catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException)
+        {
+            // A connection ending is not a fault. Either end can go away at any moment — somebody
+            // alt-F4s the game, a router drops, the backend restarts — and until now every one of
+            // those produced a forty-line stack trace logged at error level, which buries the entries
+            // that do mean something and tells whoever reads it nothing they can act on.
+            LogTransportFailure(profile, remoteAddress, username, ex, logger);
+        }
         finally
         {
             // Both leave their inner stream open, so this releases the cipher state and the write lock
@@ -357,6 +371,39 @@ public static class ClientConnection
             (clientIo as SynchronizedWriteStream)?.Dispose();
             cipherStream?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Explains a connection that ended in a transport failure, in one line, at a level that matches
+    /// how much it matters.
+    ///
+    /// Most of these are ordinary: somebody closed the game. One is not, and it is worth naming
+    /// because the symptom gives no hint of the cause. When IP forwarding is switched on here but the
+    /// backend has not been told to expect it, the backend reads the forwarding data as the first
+    /// Minecraft packet, cannot parse it, and drops the connection the instant it arrives — every
+    /// time, for every player. What that looks like from here is a write failing immediately after a
+    /// login was allowed, which is exactly what this is.
+    /// </summary>
+    private static void LogTransportFailure(ServerProfile profile, IPAddress remoteAddress, string username,
+        Exception ex, ILogger logger)
+    {
+        if (profile.IpForwarding != IpForwardingMode.None)
+        {
+            logger.LogWarning(
+                "[{Profile}] the connection for '{Username}' ({Ip}) failed right after login: {Message}. " +
+                "This profile has IpForwarding set to {Mode}, so check the SERVER is configured to expect it " +
+                "({Setting}). A server that is not will drop every connection the moment the forwarding data " +
+                "arrives, which looks exactly like this.",
+                profile.Name, username, remoteAddress, ex.Message, profile.IpForwarding,
+                profile.IpForwarding == IpForwardingMode.ProxyProtocol
+                    ? "Paper: proxies.proxy-protocol: true in config/paper-global.yml"
+                    : "Spigot/Paper: bungeecord: true under settings in spigot.yml");
+
+            return;
+        }
+
+        logger.LogDebug("[{Profile}] the connection for '{Username}' ({Ip}) ended: {Message}",
+            profile.Name, username, remoteAddress, ex.Message);
     }
 
     /// <summary>
@@ -580,11 +627,21 @@ public static class ClientConnection
         }
     }
 
-    private static async Task TrySendPlayDisconnectAsync(TcpClient client, Stream clientStream, int playDisconnectPacketId, string reason, CancellationToken ct)
+    /// <summary>
+    /// The last thing a refused player is told, and the one message that most needs to arrive: it is
+    /// the only place they find out what to do about it.
+    ///
+    /// Encoded for the negotiated threshold like everything else. The kick reasons are among the
+    /// longest strings this project has — the explanation of an unsupported client version is over two
+    /// hundred characters before its NBT wrapper — so getting this wrong replaces the explanation with
+    /// a decoder error, which is the worst possible substitution.
+    /// </summary>
+    private static async Task TrySendPlayDisconnectAsync(TcpClient client, Stream clientStream,
+        int playDisconnectPacketId, string reason, int compressionThreshold, CancellationToken ct)
     {
         try
         {
-            byte[] packet = FrameWriter.WriteCompressedFrameUncompressedPayload(playDisconnectPacketId, NbtTextComponent.BuildLiteral(reason));
+            byte[] packet = FrameWriter.WritePlayFrame(playDisconnectPacketId, NbtTextComponent.Build(reason), compressionThreshold);
             await clientStream.WriteAsync(packet, ct).ConfigureAwait(false);
             await clientStream.FlushAsync(ct).ConfigureAwait(false);
             client.Client.Shutdown(SocketShutdown.Send);
@@ -618,13 +675,12 @@ public static class ClientConnection
 
     private static async Task PumpWithInspectionAsync(TcpClient client, Stream clientStream, Stream backendStream,
         PlayStateInspector inspector, PlayStatePacketIds packetIds, AuthHold? authHold,
-        InspectionOptions inspection, CancellationToken hostShutdown)
+        ConnectionCompression compression, InspectionOptions inspection, CancellationToken hostShutdown)
     {
         using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(hostShutdown);
 
-        Task backendToClient = authHold is null
-            ? PumpAsync(backendStream, clientStream, pumpCts)
-            : WatchThenPumpAsync(backendStream, clientStream, inspector, packetIds, authHold, inspection, pumpCts);
+        Task backendToClient = RelayBackendAsync(backendStream, clientStream, inspector, packetIds,
+            authHold, compression, inspection, pumpCts);
         Task clientToBackend = RunInspectorAsync(inspector, clientStream, backendStream, pumpCts);
 
         await Task.WhenAny(clientToBackend, backendToClient).ConfigureAwait(false);
@@ -641,8 +697,8 @@ public static class ClientConnection
 
         if (inspector.DisconnectReason is not null)
         {
-            await TrySendPlayDisconnectAsync(client, clientStream, packetIds.PlayDisconnectClientbound, inspector.DisconnectReason, CancellationToken.None)
-                .ConfigureAwait(false);
+            await TrySendPlayDisconnectAsync(client, clientStream, packetIds.PlayDisconnectClientbound,
+                inspector.DisconnectReason, compression.Threshold, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -663,27 +719,28 @@ public static class ClientConnection
     }
 
     /// <summary>
-    /// Carries the backend's replies while reading the two things a held player's rescue depends on:
-    /// where the backend has placed them, and whether something has started hurting them.
+    /// Carries the backend's replies while reading what the proxy needs from them: always the
+    /// compression threshold the login phase negotiates, and additionally — while somebody is held at
+    /// the prompt — where the backend has placed them and whether something is hurting them.
     ///
-    /// Reverts to a plain byte copy the moment the hold is released, so this costs nothing for the
-    /// rest of the session. Every frame is forwarded before it is examined and regardless of whether
-    /// examining it worked -- this side of the connection is observed, never filtered, and a packet
-    /// the proxy could not read is still a packet the client is entitled to receive.
+    /// Reverts to a plain byte copy as soon as there is nothing left to learn, so this costs nothing
+    /// for the rest of the session. Every frame is forwarded before it is examined and regardless of
+    /// whether examining it worked: this side of the connection is observed, never filtered, and a
+    /// packet the proxy could not read is still a packet the client is entitled to receive.
     /// </summary>
-    private static async Task WatchThenPumpAsync(Stream backendStream, Stream clientStream,
-        PlayStateInspector inspector, PlayStatePacketIds packetIds, AuthHold authHold,
-        InspectionOptions inspection, CancellationTokenSource pumpCts)
+    private static async Task RelayBackendAsync(Stream backendStream, Stream clientStream,
+        PlayStateInspector inspector, PlayStatePacketIds packetIds, AuthHold? authHold,
+        ConnectionCompression compression, InspectionOptions inspection, CancellationTokenSource pumpCts)
     {
         try
         {
-            var watcher = new ClientboundAuthWatcher(
-                packetIds, authHold,
+            var relay = new ClientboundRelay(
+                packetIds, compression, authHold,
                 onPosition: _ => { },
                 onHealth: inspector.NoteBackendHealth,
                 maxFrameBytes: inspection.MaxClientboundFrameBytes);
 
-            await watcher.RunAsync(backendStream, clientStream, pumpCts.Token).ConfigureAwait(false);
+            await relay.RunAsync(backendStream, clientStream, pumpCts.Token).ConfigureAwait(false);
         }
         catch
         {

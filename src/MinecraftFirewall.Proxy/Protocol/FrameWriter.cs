@@ -1,10 +1,20 @@
+using System.IO.Compression;
+
 namespace MinecraftFirewall.Proxy.Protocol;
 
 /// <summary>
-/// Encodes the small number of packets this proxy ever originates itself (kick/disconnect messages).
-/// Never used for anything the proxy is merely forwarding — those go out as the exact bytes that were
-/// read in. Outbound synthetic packets here are always small, so they're sent uncompressed
-/// (dataLength=0), which the compressed-frame format permits regardless of the negotiated threshold.
+/// Encodes the small number of packets this proxy ever originates itself. Never used for anything it
+/// is merely forwarding — those go out as the exact bytes that were read in.
+///
+/// Every one of these has to respect the connection's compression threshold, and that is less
+/// forgiving than it looks. A payload at or above the threshold **must** be compressed; one below it
+/// must **not** be; and if the backend never enabled compression, frames carry no length field at all.
+/// The client enforces all three and disconnects rather than complaining.
+///
+/// This class used to send everything uncompressed, on the stated belief that the format allowed it
+/// whatever the threshold was. It does not, and the cost was a live disconnect: the explanation of
+/// what locking your name means is 312 bytes, the default threshold is 256, and asking the question
+/// kicked you.
 /// </summary>
 public static class FrameWriter
 {
@@ -15,12 +25,55 @@ public static class FrameWriter
         return [.. VarInt.Encode(payload.Length), .. payload];
     }
 
-    /// <summary>Encodes a packet for the post-compression phase (Configuration/Play) as an uncompressed (dataLength=0) frame.</summary>
+    /// <summary>Encodes a packet for the post-compression phase (Configuration/Play) as an uncompressed
+    /// (dataLength=0) frame. Only correct for payloads below the negotiated threshold — prefer
+    /// <see cref="WritePlayFrame"/>, which picks the right encoding for you.</summary>
     public static byte[] WriteCompressedFrameUncompressedPayload(int packetId, byte[] fields)
     {
         byte[] inner = [.. VarInt.Encode(packetId), .. fields];
         byte[] payload = [.. VarInt.Encode(0), .. inner];
         return [.. VarInt.Encode(payload.Length), .. payload];
+    }
+
+    /// <summary>
+    /// Encodes a packet the proxy is sending to a player, in whichever of the three forms this
+    /// connection actually negotiated.
+    ///
+    /// The boundary is inclusive, and that is not a guess: the client refuses an uncompressed frame
+    /// whose payload is "greater than threshold", and refuses a compressed one whose declared length
+    /// is "below threshold". A payload of exactly the threshold is therefore legal compressed and
+    /// illegal uncompressed, so that is where the comparison sits.
+    /// </summary>
+    /// <param name="compressionThreshold">Payloads this size or larger are compressed. Negative means
+    /// the backend never enabled compression, so frames carry no declared-length field.</param>
+    public static byte[] WritePlayFrame(int packetId, byte[] fields, int compressionThreshold)
+    {
+        byte[] inner = [.. VarInt.Encode(packetId), .. fields];
+
+        if (compressionThreshold < 0)
+            return [.. VarInt.Encode(inner.Length), .. inner];
+
+        if (inner.Length < compressionThreshold)
+        {
+            byte[] small = [.. VarInt.Encode(0), .. inner];
+            return [.. VarInt.Encode(small.Length), .. small];
+        }
+
+        byte[] deflated = Deflate(inner);
+        byte[] payload = [.. VarInt.Encode(inner.Length), .. deflated];
+        return [.. VarInt.Encode(payload.Length), .. payload];
+    }
+
+    /// <summary>zlib, matching what the reader on the other side expects — the same format
+    /// CompressedPacketReader inflates in the opposite direction.</summary>
+    private static byte[] Deflate(byte[] data)
+    {
+        using var output = new MemoryStream();
+
+        using (var zlib = new ZLibStream(output, CompressionLevel.Optimal, leaveOpen: true))
+            zlib.Write(data);
+
+        return output.ToArray();
     }
 
     /// <summary>
@@ -32,8 +85,8 @@ public static class FrameWriter
     /// exists for the premium self-lock flow, where kicking somebody for asking a question would be an
     /// odd way to answer it.
     /// </summary>
-    public static byte[] WriteSystemChatFrame(int packetId, string text) =>
-        WriteCompressedFrameUncompressedPayload(packetId, [.. NbtTextComponent.BuildLiteral(text), 0x00]);
+    public static byte[] WriteSystemChatFrame(int packetId, string text, int compressionThreshold) =>
+        WritePlayFrame(packetId, [.. NbtTextComponent.Build(text), 0x00], compressionThreshold);
 
     /// <summary>
     /// A clientbound title: large text across the middle of the screen, with a smaller line beneath.
@@ -48,7 +101,7 @@ public static class FrameWriter
     /// interval so the text never blinks out between reminders.
     /// </summary>
     public static byte[] WriteTitleFrames(int animationPacketId, int titlePacketId, int subtitlePacketId,
-        string title, string subtitle, int stayTicks)
+        string title, string subtitle, int stayTicks, int compressionThreshold)
     {
         Span<byte> timing = stackalloc byte[12];
         System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(timing[..4], 0);          // fade in
@@ -57,9 +110,9 @@ public static class FrameWriter
 
         return
         [
-            .. WriteCompressedFrameUncompressedPayload(animationPacketId, timing.ToArray()),
-            .. WriteCompressedFrameUncompressedPayload(subtitlePacketId, NbtTextComponent.BuildLiteral(subtitle)),
-            .. WriteCompressedFrameUncompressedPayload(titlePacketId, NbtTextComponent.BuildLiteral(title)),
+            .. WritePlayFrame(animationPacketId, timing.ToArray(), compressionThreshold),
+            .. WritePlayFrame(subtitlePacketId, NbtTextComponent.Build(subtitle), compressionThreshold),
+            .. WritePlayFrame(titlePacketId, NbtTextComponent.Build(title), compressionThreshold),
         ];
     }
 
@@ -83,7 +136,7 @@ public static class FrameWriter
     /// instead of carrying their momentum into the hold.
     /// </summary>
     public static byte[] WritePlayerPositionFrame(int packetId, PositionLayout layout,
-        double x, double y, double z, float yaw, float pitch, int teleportId)
+        double x, double y, double z, float yaw, float pitch, int teleportId, int compressionThreshold)
     {
         var fields = new List<byte>(48);
 
@@ -122,6 +175,6 @@ public static class FrameWriter
             fields.AddRange(VarInt.Encode(teleportId));
         }
 
-        return WriteCompressedFrameUncompressedPayload(packetId, [.. fields]);
+        return WritePlayFrame(packetId, [.. fields], compressionThreshold);
     }
 }

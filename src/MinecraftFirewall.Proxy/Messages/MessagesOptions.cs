@@ -35,7 +35,7 @@ public sealed class MessagesOptions
     /// <summary>Sent when the mandatory first-message grace-authentication check fails (wrong
     /// password, or the first message wasn't a /login command at all).</summary>
     public string GraceAuthenticationFailed { get; set; } =
-        "Authentication failed. This IP is not recognized and the correct password was not provided.";
+        "&cAuthentication failed. &7This IP is not recognized and the correct password was not provided.";
 
     /// <summary>Sent when a username marked PremiumRequired fails Mojang session verification — a
     /// cracked/offline client, a failed hasJoined check, or a UUID that doesn't match the one this
@@ -71,21 +71,30 @@ public sealed class MessagesOptions
     // there. Telling people to type something that renders as an error was its own small bug report.
 
     public string RegistrationPrompt { get; set; } =
-        "This server requires an account. Type  register <password>  in chat to create one. " +
-        "You cannot move or interact until you do. Choose something you have not used elsewhere.";
+        "&eThis server requires an account. Type  &a&lregister <password>&r&e  in chat to create one. " +
+        "You cannot move or interact until you do. &7Choose something you have not used elsewhere.";
 
     public string LoginPrompt { get; set; } =
-        "Welcome back. Type  login <password>  in chat to continue. You cannot move or interact until you do.";
+        "&eWelcome back. Type  &a&llogin <password>&r&e  in chat to continue. " +
+        "&7You cannot move or interact until you do.";
 
     public string AuthenticationAccepted { get; set; } =
-        "Authenticated. Have fun.";
+        "&aAuthenticated. Have fun.";
 
     /// <summary>Takes the configured minimum length as {0}.</summary>
     public string PasswordTooShort { get; set; } =
-        "That password is too short — it needs at least {0} characters. Try again with  register <password>";
+        "&cThat password is too short — it needs at least &f{0}&c characters. " +
+        "&7Try again with  &aregister <password>";
 
     public string AuthenticationTimedOut { get; set; } =
-        "You did not register or log in within the time allowed. Reconnect and try again.";
+        "&cYou did not register or log in within the time allowed. &7Reconnect and try again.";
+
+    // Colour is written the way it is everywhere else in Minecraft: &c for red, &l for bold, &r to
+    // clear. The section sign works too, for anyone who prefers it. An ampersand only counts as a code
+    // when what follows is a lowercase letter or a digit, so ordinary text like "Q&A" is left alone.
+    //
+    // Codes are stripped rather than applied on the login-state kick messages, which carry JSON rather
+    // than the components the rest of these use — see LoginDisconnect.
 
     // ---- the on-screen prompt --------------------------------------------------------------------
     // Chat was not enough, and that only became obvious when somebody who had not built this tried it.
@@ -93,41 +102,41 @@ public sealed class MessagesOptions
     // away while they are looking at their inventory. These go across the middle of the screen, where
     // they cannot be missed, and are kept short because a title has room for one line and no more.
 
-    public string RegistrationTitle { get; set; } = "Registration required";
+    public string RegistrationTitle { get; set; } = "&e&lRegistration required";
 
-    public string RegistrationSubtitle { get; set; } = "Type in chat:  register <password>";
+    public string RegistrationSubtitle { get; set; } = "&fType in chat:  &aregister <password>";
 
-    public string LoginTitle { get; set; } = "Login required";
+    public string LoginTitle { get; set; } = "&e&lLogin required";
 
-    public string LoginSubtitle { get; set; } = "Type in chat:  login <password>";
+    public string LoginSubtitle { get; set; } = "&fType in chat:  &alogin <password>";
 
     /// <summary>Offered alongside the registration prompt. Somebody with a real Minecraft account
     /// should not have to invent a password for a server that could simply recognise them.</summary>
     public string PremiumOfferDuringRegistration { get; set; } =
-        "Own this name on a real Minecraft account? Type  premium  instead, and it will be locked to that " +
-        "account — no password to remember, and nobody else can ever use the name here.";
+        "&bOwn this name on a real Minecraft account? Type  &f&lpremium&r&b  instead, and it will be " +
+        "locked to that account &7— no password to remember, and nobody else can ever use the name here.";
 
     // ---- changing a password in game -------------------------------------------------------------
 
     public string PasswordChanged { get; set; } =
-        "Your password has been changed. The old one no longer works.";
+        "&aYour password has been changed. &7The old one no longer works.";
 
     public string CurrentPasswordWrong { get; set; } =
-        "That is not your current password, so nothing was changed.";
+        "&cThat is not your current password, so nothing was changed.";
 
     public string NoPasswordToChange { get; set; } =
-        "You do not have a password on this server yet. Type  register <password>  to set one.";
+        "&eYou do not have a password on this server yet. Type  &aregister <password>&e  to set one.";
 
     /// <summary>Sent when somebody who already has a password types the register command. Their name
     /// is not re-registered — being at the keyboard is not the same as knowing the password.</summary>
     public string AlreadyRegistered { get; set; } =
-        "You already have a password here. To change it, type  changepassword <current> <new>  " +
-        "— you need the current one, even from this computer.";
+        "&eYou already have a password here. To change it, type  &achangepassword <current> <new>&e  " +
+        "&7— you need the current one, even from this computer.";
 
     /// <summary>Sent as the kick reason when a held player starts taking damage. See
     /// IdentityOptions.DisconnectIfDamagedWhileAuthenticating for why a kick is the kindest option
     /// available to something sitting in front of the server rather than inside it.</summary>
     public string DamagedWhileAuthenticating { get; set; } =
-        "Something attacked you while you were logging in, so you were disconnected before you could die. " +
-        "Rejoin and log in straight away.";
+        "&cSomething attacked you while you were logging in, so you were disconnected before you could die. " +
+        "&7Rejoin and log in straight away.";
 }

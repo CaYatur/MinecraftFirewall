@@ -27,7 +27,11 @@ public sealed record PersistedIdentityEntry(
     [property: JsonPropertyName("registeredAt")] DateTimeOffset? RegisteredAt = null,
     [property: JsonPropertyName("lastSeenAt")] DateTimeOffset? LastSeenAt = null,
     [property: JsonPropertyName("lastIp")] string? LastAddress = null,
-    [property: JsonPropertyName("events")] List<PersistedPlayerEvent>? Events = null);
+    [property: JsonPropertyName("events")] List<PersistedPlayerEvent>? Events = null,
+    // A lock the player earned, as distinct from one configuration declares. Losing this on restart
+    // failed OPEN: the name became usable by anyone again, and the UUID pin recorded for it sat there
+    // doing nothing, because a pin is only consulted while the name is currently locked.
+    [property: JsonPropertyName("premiumSelfClaimed")] bool PremiumLockedAtRuntime = false);
 
 public sealed record PersistedProfile(
     [property: JsonPropertyName("profile")] string ProfileName,
@@ -41,12 +45,19 @@ public sealed record PersistedIdentityState(
 /// Reads and writes the runtime-learned half of every profile's IdentityStore.
 ///
 /// **Only runtime-learned state is persisted**: self-registered CaYaDev-Check password hashes,
-/// learned IPs, and premium UUID pins. Admin-declared fields — the static IP allowlist and the
-/// PremiumRequired flag — are deliberately NOT persisted, because appsettings.json is their single
-/// source of truth. Persisting them would mean an admin removing a name from config no longer
-/// actually removes it, with a stale file quietly overriding the file the admin edited. It also
-/// keeps the Admin CLI's "this does not survive a restart" warnings truthful: `whitelist-add-me`
-/// and `require-premium` both write exactly those config-domain fields.
+/// learned IPs, premium UUID pins, per-player history, and premium locks a player EARNED. The
+/// admin-declared fields — the static IP allowlist, and a premium lock declared in configuration —
+/// are deliberately NOT persisted, because appsettings.json is their single source of truth.
+/// Persisting those would mean an admin removing a name from config no longer actually removes it,
+/// with a stale file quietly overriding the file they edited. It also keeps the Admin CLI's "this
+/// does not survive a restart" warnings truthful: `whitelist-add-me` and `require-premium` both write
+/// exactly those config-domain fields.
+///
+/// An earned lock is a different thing entirely and belongs on this side of the line. When an account
+/// answers the encryption challenge for a name, that name is claimed permanently — the player is told
+/// so in those words. Nothing in configuration rebuilds it, so before it was persisted the promise
+/// lasted exactly until the next restart, and then failed OPEN: the name was open to anyone again,
+/// and the genuine owner was asked for a password they had been promised they would never need.
 /// </summary>
 public sealed class IdentityStatePersistence(ILogger<IdentityStatePersistence> logger)
 {
@@ -65,7 +76,7 @@ public sealed class IdentityStatePersistence(ILogger<IdentityStatePersistence> l
         var entries = profile.IdentityStore.All()
             // Nothing learned yet — persisting it would just be a config echo.
             .Where(entry => entry.PasswordHash is not null || entry.PinnedUuid is not null ||
-                            entry.LearnedIps.Count > 0 || entry.Events.Count > 0)
+                            entry.LearnedIps.Count > 0 || entry.Events.Count > 0 || entry.PremiumLockedAtRuntime)
             .OrderBy(entry => entry.Username, StringComparer.OrdinalIgnoreCase)
             .Select(entry => new PersistedIdentityEntry(
                 entry.Username,
@@ -77,7 +88,8 @@ public sealed class IdentityStatePersistence(ILogger<IdentityStatePersistence> l
                 entry.RegisteredAt,
                 entry.LastSeenAt,
                 entry.LastAddress,
-                [.. entry.Events.Select(e => new PersistedPlayerEvent(e.When, e.Kind.ToString(), e.Address, e.Detail))]))
+                [.. entry.Events.Select(e => new PersistedPlayerEvent(e.When, e.Kind.ToString(), e.Address, e.Detail))],
+                entry.PremiumLockedAtRuntime))
             .ToList();
 
         return new PersistedProfile(profile.Name, entries);
@@ -140,6 +152,14 @@ public sealed class IdentityStatePersistence(ILogger<IdentityStatePersistence> l
 
                 // Restored as it was saved, not as of now: the whole point of a "last seen" is that it
                 // is a fact about the past, and a restart is not a sighting.
+                // Restored as a lock, not merely as a note that one once existed. This is the line
+                // that keeps "only your account can ever use this name" true across a restart.
+                if (persistedEntry.PremiumLockedAtRuntime)
+                {
+                    entry.PremiumLockedAtRuntime = true;
+                    entry.PremiumRequired = true;
+                }
+
                 entry.RegisteredAt ??= persistedEntry.RegisteredAt;
                 entry.LastSeenAt ??= persistedEntry.LastSeenAt;
                 entry.LastAddress ??= persistedEntry.LastAddress;

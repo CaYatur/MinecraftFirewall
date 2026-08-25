@@ -61,6 +61,7 @@ public sealed class PremiumLoginHandshake(
         if (outcome.Success)
         {
             entry.PremiumRequired = true;
+            entry.PremiumLockedAtRuntime = true;
             logger.LogWarning(
                 "'{Username}' proved ownership of a genuine Minecraft account and has been permanently claimed. Only that account can use this name from now on.",
                 username);
