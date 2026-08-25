@@ -91,6 +91,24 @@ public static class DefenseTestFactory
             NullLogger<PolicyEngine>.Instance);
     }
 
+    /// <summary>Disabled by default and pointed at a throwaway file: a test must never reach the
+    /// network to fetch a protocol dataset, nor write to the machine's real learned-tables store.</summary>
+    public static MinecraftFirewall.Proxy.Protocol.ProtocolLearningService CreateProtocolLearning() =>
+        new(Options.Create(new MinecraftFirewall.Proxy.Protocol.ProtocolLearningOptions
+            {
+                Enabled = false,
+                StorePath = Path.Combine(Path.GetTempPath(), $"mcfw-test-protocols-{Guid.NewGuid():N}.json"),
+            }),
+            new MinecraftFirewall.Proxy.Protocol.LearnedProtocolStore(
+                Path.Combine(Path.GetTempPath(), $"mcfw-test-protocols-{Guid.NewGuid():N}.json"),
+                NullLogger.Instance),
+            new FakeHttpClientFactory(new FakeHttpMessageHandler((request, _) =>
+                // Failing loudly beats a client that quietly reaches a real host: a test that silently
+                // downloaded a protocol dataset would be slow, would break without internet, and would
+                // depend on what that host was serving that day.
+                throw new HttpRequestException($"A test tried to reach {request.RequestUri}. Tests do not use the network."))),
+            NullLogger<MinecraftFirewall.Proxy.Protocol.ProtocolLearningService>.Instance);
+
     public static BotDetector CreateBotDetector(BotDefenseOptions? options = null, ThreatIntelligence? threats = null) =>
         new(Options.Create(options ?? new BotDefenseOptions()), threats ?? CreateThreatIntelligence());
 }

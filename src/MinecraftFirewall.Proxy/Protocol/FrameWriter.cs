@@ -34,4 +34,32 @@ public static class FrameWriter
     /// </summary>
     public static byte[] WriteSystemChatFrame(int packetId, string text) =>
         WriteCompressedFrameUncompressedPayload(packetId, [.. NbtTextComponent.BuildLiteral(text), 0x00]);
+
+    /// <summary>
+    /// A clientbound title: large text across the middle of the screen, with a smaller line beneath.
+    ///
+    /// This exists because chat is a bad place to put an instruction somebody has to act on. A player
+    /// who has never met a login-required server does not read chat, and the message scrolls away
+    /// while they are looking at their inventory — which is exactly what happened when the prompt was
+    /// chat-only. A title is unmissable and stays put.
+    ///
+    /// Three packets rather than one: the timing has to be sent first, because a title already on
+    /// screen keeps the timing it was shown with. The stay duration is set far longer than the prompt
+    /// interval so the text never blinks out between reminders.
+    /// </summary>
+    public static byte[] WriteTitleFrames(int animationPacketId, int titlePacketId, int subtitlePacketId,
+        string title, string subtitle, int stayTicks)
+    {
+        Span<byte> timing = stackalloc byte[12];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(timing[..4], 0);          // fade in
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(timing[4..8], stayTicks); // stay
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(timing[8..], 0);          // fade out
+
+        return
+        [
+            .. WriteCompressedFrameUncompressedPayload(animationPacketId, timing.ToArray()),
+            .. WriteCompressedFrameUncompressedPayload(subtitlePacketId, NbtTextComponent.BuildLiteral(subtitle)),
+            .. WriteCompressedFrameUncompressedPayload(titlePacketId, NbtTextComponent.BuildLiteral(title)),
+        ];
+    }
 }

@@ -86,6 +86,9 @@ def build(version_path):
 
     table["disconnect"] = pick(cb, ["kick_disconnect"])
     table["system_chat"] = pick(cb, ["system_chat"])
+    table["title_text"] = pick(cb, ["set_title_text", "title"])
+    table["subtitle_text"] = pick(cb, ["set_title_subtitle", "set_subtitle_text"])
+    table["title_animation"] = pick(cb, ["set_title_time", "set_titles_animation"])
     table["config_finish"] = pick(config_sb, ["finish_configuration"])
 
     if table["system_chat"] is None:
@@ -94,6 +97,8 @@ def build(version_path):
         return None, "no configuration state (pre-1.20.2)"
     if table["disconnect"] is None:
         return None, "no disconnect"
+    if any(table[k] is None for k in ("title_text", "subtitle_text", "title_animation")):
+        return None, "no title packets"
 
     table["actions"] = sorted({sb[n] for n in ACTION_NAMES if n in sb})
     return table, None
@@ -120,7 +125,8 @@ for proto, expected in mojang.items():
         mismatches.append(f"{version}: {why}")
         continue
 
-    for key in ("chat", "chat_command", "config_finish", "system_chat", "move_pos", "swing"):
+    for key in ("chat", "chat_command", "config_finish", "system_chat", "move_pos", "swing",
+                "title_text", "subtitle_text", "title_animation"):
         if table[key] != expected[key]:
             mismatches.append(f"{version} {key}: minecraft-data {table[key]:#04x} vs Mojang {expected[key]:#04x}")
 

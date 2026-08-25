@@ -11,6 +11,7 @@ using MinecraftFirewall.Proxy.Inspection;
 using MinecraftFirewall.Proxy.IpIntel;
 using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
+using MinecraftFirewall.Proxy.Protocol;
 using MinecraftFirewall.Proxy.RateLimiting;
 using Microsoft.Extensions.Options;
 using Serilog;
@@ -40,6 +41,7 @@ builder.Services.Configure<HoneypotOptions>(builder.Configuration.GetSection(Hon
 builder.Services.Configure<ThreatIntelOptions>(builder.Configuration.GetSection(ThreatIntelOptions.SectionName));
 builder.Services.Configure<InspectionOptions>(builder.Configuration.GetSection(InspectionOptions.SectionName));
 builder.Services.Configure<AnomalyOptions>(builder.Configuration.GetSection(AnomalyOptions.SectionName));
+builder.Services.Configure<ProtocolLearningOptions>(builder.Configuration.GetSection(ProtocolLearningOptions.SectionName));
 
 builder.Services.Configure<AlertOptions>(builder.Configuration.GetSection(AlertOptions.SectionName));
 
@@ -60,6 +62,15 @@ builder.Services.AddSingleton<ThreatIntelligence>();
 builder.Services.AddSingleton<BotDetector>();
 builder.Services.AddSingleton<ScannerDetector>();
 builder.Services.AddSingleton<AnomalyDetector>();
+
+builder.Services.AddSingleton(sp => new LearnedProtocolStore(
+    sp.GetRequiredService<IOptions<ProtocolLearningOptions>>().Value.StorePath,
+    sp.GetRequiredService<ILogger<LearnedProtocolStore>>()));
+
+// Registered as itself as well as a hosted service: the connection path calls NoteUnknownVersion on
+// the same instance the background loop reads from.
+builder.Services.AddSingleton<ProtocolLearningService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ProtocolLearningService>());
 
 // The responder is the detector's, not a second one: registering it separately would give the policy
 // engine a different instance from the one recording the anomalies, and every action would be decided

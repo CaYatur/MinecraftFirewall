@@ -5,6 +5,7 @@ using MinecraftFirewall.Proxy.Identity.Premium;
 using MinecraftFirewall.Proxy.Inspection;
 using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
+using MinecraftFirewall.Proxy.Protocol;
 using Microsoft.Extensions.Options;
 
 namespace MinecraftFirewall.Proxy;
@@ -21,6 +22,7 @@ public sealed class ProxyHostService(
     ConnectionGovernor governor,
     BotDetector botDetector,
     AnomalyDetector anomalyDetector,
+    ProtocolLearningService protocolLearning,
     ILoggerFactory loggerFactory) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -39,7 +41,7 @@ public sealed class ProxyHostService(
         {
             var logger = loggerFactory.CreateLogger($"ProxyListener.{profile.Name}");
             var listener = new ProxyListener(profile, policyEngine, identityOptions.Value, dangerousCommands, messages,
-                premiumHandshake, governor, botDetector, inspectionOptions.Value, anomalyDetector, logger);
+                premiumHandshake, governor, botDetector, inspectionOptions.Value, anomalyDetector, protocolLearning, logger);
             return listener.RunAsync(stoppingToken);
         }).ToArray();
 

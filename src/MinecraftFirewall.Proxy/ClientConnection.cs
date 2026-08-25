@@ -45,6 +45,7 @@ public static class ClientConnection
         BotDetector botDetector,
         InspectionOptions inspection,
         AnomalyDetector anomalyDetector,
+        ProtocolLearningService protocolLearning,
         ILogger logger,
         CancellationToken hostShutdown)
     {
@@ -112,7 +113,7 @@ public static class ClientConnection
 
         await HandleLoginAsync(client, clientStream, handshakeFrame, handshake, profile, remoteAddress,
             policyEngine, identityOptions, dangerousCommands, messages, premiumHandshake, botDetector, inspection,
-            anomalyDetector, logger, preLoginCts, hostShutdown).ConfigureAwait(false);
+            anomalyDetector, protocolLearning, logger, preLoginCts, hostShutdown).ConfigureAwait(false);
     }
 
     private static async Task HandleStatusAsync(TcpClient client, NetworkStream clientStream, Frame handshakeFrame,
@@ -137,8 +138,9 @@ public static class ClientConnection
     private static async Task HandleLoginAsync(TcpClient client, NetworkStream clientStream, Frame handshakeFrame, HandshakeInfo handshake,
         ServerProfile profile, IPAddress remoteAddress, PolicyEngine policyEngine, IdentityOptions identityOptions,
         IReadOnlyCollection<string> dangerousCommands, MessagesOptions messages, PremiumLoginHandshake premiumHandshake,
-        BotDetector botDetector, InspectionOptions inspection, AnomalyDetector anomalyDetector, ILogger logger,
-        CancellationTokenSource preLoginCts, CancellationToken hostShutdown)
+        BotDetector botDetector, InspectionOptions inspection, AnomalyDetector anomalyDetector,
+        ProtocolLearningService protocolLearning, ILogger logger, CancellationTokenSource preLoginCts,
+        CancellationToken hostShutdown)
     {
         Frame loginStartFrame;
         string username;
@@ -187,6 +189,13 @@ public static class ClientConnection
         }
 
         bool hasPacketIds = ProtocolVersionRegistry.TryGet(handshake.ProtocolVersion, out var packetIds);
+
+        // A dictionary write and nothing else. The version this client is speaking is the only
+        // evidence anyone has that a table for it is worth fetching, and the fetching happens on a
+        // background loop rather than here — a player waiting at a connect screen must not be made to
+        // wait for an HTTP request.
+        if (!hasPacketIds)
+            protocolLearning.NoteUnknownVersion(handshake.ProtocolVersion);
 
         // Deliberately after the policy engine, never before it. The identity checks are the ones with
         // a definite answer — an allowlisted address, a correct password, a verified Mojang account —

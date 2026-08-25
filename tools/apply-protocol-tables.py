@@ -28,6 +28,9 @@ for protocol in sorted(tables, key=int):
             PlaySignUpdateServerbound: 0x{t['sign_update']:02X},
             PlayEditBookServerbound: 0x{t['edit_book']:02X},
             PlaySystemChatClientbound: 0x{t['system_chat']:02X},
+            PlayTitleTextClientbound: 0x{t['title_text']:02X},
+            PlaySubtitleTextClientbound: 0x{t['subtitle_text']:02X},
+            PlayTitleAnimationClientbound: 0x{t['title_animation']:02X},
             PlayActionServerbound: [{actions}]),''')
 
 p = Path('src/MinecraftFirewall.Proxy/Protocol/ProtocolVersionRegistry.cs')
