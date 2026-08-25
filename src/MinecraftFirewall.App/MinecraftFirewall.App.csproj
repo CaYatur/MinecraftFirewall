@@ -21,13 +21,17 @@
          the window dies on its very first TextBlock. Caught by running the app, not by building it. -->
     <AssemblyTitle>MinecraftFirewall</AssemblyTitle>
     <Product>MinecraftFirewall</Product>
-    <Version>1.5.0</Version>
+    <Version>1.6.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- Pinned to match what MinecraftFirewall.Proxy already pulls in transitively via
          Microsoft.Extensions.Hosting.WindowsServices; a lower version here is a package downgrade. -->
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.11" />
+    <!-- For reading the command line of whatever process holds the backend port, which is the only
+         way to find where the Minecraft server actually lives: a Java process's own module path
+         points at the JVM, not at the server. -->
+    <PackageReference Include="System.Management" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>

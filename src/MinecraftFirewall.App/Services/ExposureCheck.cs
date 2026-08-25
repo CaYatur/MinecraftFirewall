@@ -59,7 +59,42 @@ public sealed class ExposureCheck
         }
 
         results.Add(CheckBackendPortFirewallRules(profiles));
+
+        // Not an exposure question, but the same page is where somebody looks to understand their own
+        // setup, and what this finds changes what the rest of the firewall can do for them.
+        foreach (ServerProfileEdit profile in profiles)
+            results.Add(DescribeBackendServer(profile));
+
         return results;
+    }
+
+    /// <summary>
+    /// Works out what the server behind the proxy is, and says what that means for the login system.
+    ///
+    /// The version matters because reading chat needs that version's packet IDs, and ViaVersion
+    /// matters because it lets far older clients join — clients whose chat this proxy cannot read.
+    /// Both are knowable from the server's own files, and neither is something an admin would think to
+    /// mention, so the panel finds out rather than asking.
+    /// </summary>
+    private static CheckResult DescribeBackendServer(ServerProfileEdit profile)
+    {
+        const string title = "ChkBackendTitle";
+
+        BackendServerInfo info = new BackendServerInspector().Inspect(profile.BackendPort);
+
+        if (info.Directory is null)
+            return new CheckResult(title, CheckVerdict.Unknown, "ChkBackendUnknown", [profile.BackendPort]);
+
+        string version = info.ServerVersion ?? "?";
+
+        if (info.HasViaVersion || info.HasViaBackwards)
+        {
+            return new CheckResult(title, CheckVerdict.Warning, "ChkBackendVia",
+                [version, info.HasViaBackwards ? "ViaVersion + ViaBackwards" : "ViaVersion"],
+                "ChkBackendViaFix");
+        }
+
+        return new CheckResult(title, CheckVerdict.Safe, "ChkBackendPlain", [version, info.Plugins.Count]);
     }
 
     /// <summary>Reads what the backend port is actually bound to. Bound to 127.0.0.1 means only this
