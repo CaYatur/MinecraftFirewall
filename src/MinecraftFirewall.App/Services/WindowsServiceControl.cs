@@ -128,7 +128,14 @@ public sealed class WindowsServiceControl
 
         var (code, output) = await RunScAsync(
             "create", ServiceName,
-            "binPath=", exePath,
+            // Quoted deliberately, and the quotes have to survive all the way into the registry.
+            // sc.exe stores whatever it receives verbatim as the service's ImagePath, so passing a
+            // bare path leaves Windows an unquoted ImagePath — and with the app installed under
+            // "C:\Program Files\...", Windows would then also try C:\Program.exe first when starting
+            // it. That is the classic unquoted-service-path privilege-escalation hole: anyone able to
+            // drop a file at that name gets it executed as the service account. ArgumentList escapes
+            // these quotes for the command line, so sc.exe receives them as part of the value.
+            "binPath=", $"\"{exePath}\"",
             "start=", "auto",
             "DisplayName=", DisplayName).ConfigureAwait(false);
 
