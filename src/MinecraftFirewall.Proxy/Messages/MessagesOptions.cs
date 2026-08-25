@@ -53,4 +53,26 @@ public sealed class MessagesOptions
     /// <summary>Shown once the claim has succeeded, on the connection that proved it.</summary>
     public string PremiumLockSucceeded { get; set; } =
         "Your name is now locked to this Minecraft account. Nobody else can use it on this server.";
+
+    // ---- server-wide registration (Identity.RequireRegistrationForEveryone) -----------------------
+    // Sent into the player's chat while they are held still, so they are longer and more instructional
+    // than the kick messages above: somebody reading these is stuck and needs to be told what to do,
+    // not merely told what happened.
+
+    public string RegistrationPrompt { get; set; } =
+        "This server requires an account. Type  /register <password>  to create one. " +
+        "You cannot move or interact until you do. Choose something you have not used elsewhere.";
+
+    public string LoginPrompt { get; set; } =
+        "Welcome back. Type  /login <password>  to continue. You cannot move or interact until you do.";
+
+    public string AuthenticationAccepted { get; set; } =
+        "Authenticated. Have fun.";
+
+    /// <summary>Takes the configured minimum length as {0}.</summary>
+    public string PasswordTooShort { get; set; } =
+        "That password is too short — it needs at least {0} characters. Try again with  /register <password>";
+
+    public string AuthenticationTimedOut { get; set; } =
+        "You did not register or log in within the time allowed. Reconnect and try again.";
 }

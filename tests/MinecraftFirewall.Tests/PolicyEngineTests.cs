@@ -37,7 +37,8 @@ public class PolicyEngineTests
         var engine = new PolicyEngine(vpnIntel, rateLimiter, banService, strikeTracker, ipInfo, alerts,
             DefenseTestFactory.CreateThreatIntelligence(), DefenseTestFactory.CreateScannerDetector(), banOptions,
             Options.Create(ipInfoOptions ?? new IpInfoOptions()), Options.Create(new DdosOptions()),
-            Options.Create(new BotDefenseOptions()), NullLogger<PolicyEngine>.Instance);
+            Options.Create(new BotDefenseOptions()), Options.Create(new IdentityOptions()),
+            NullLogger<PolicyEngine>.Instance);
         return new Fixture(engine, vpnIntel, gateway, banService, ipInfo, alerts);
     }
 

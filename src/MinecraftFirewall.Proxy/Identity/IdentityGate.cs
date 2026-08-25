@@ -28,6 +28,13 @@ public enum IdentityOutcome
     /// backend connection, and a failure is always a denial with no fallback to any weaker check.
     /// </summary>
     PremiumVerificationRequired,
+
+    /// <summary>
+    /// Server-wide registration is switched on and this username has no password yet. The player joins
+    /// but is held still until they register — see PlayStateInspector, which refuses every packet that
+    /// would let them act on the world while they are in this state.
+    /// </summary>
+    RegistrationRequired,
 }
 
 public sealed record IdentityDecision(IdentityOutcome Outcome, string Reason);
@@ -39,10 +46,18 @@ public sealed record IdentityDecision(IdentityOutcome Outcome, string Reason);
 /// </summary>
 public static class IdentityGate
 {
-    public static IdentityDecision Evaluate(IdentityEntry? entry, IPAddress remoteAddress)
+    /// <param name="requireRegistration">Server-wide AuthMe-style registration, from
+    /// IdentityOptions.RequireRegistrationForEveryone. It is checked *after* the premium branch, never
+    /// before: a name proven to belong to a real Microsoft account has already been authenticated by
+    /// something stronger than a stored password, and must never be asked for one.</param>
+    public static IdentityDecision Evaluate(IdentityEntry? entry, IPAddress remoteAddress, bool requireRegistration = false)
     {
         if (entry is null)
-            return new IdentityDecision(IdentityOutcome.NotProtected, "No identity record for this username.");
+        {
+            return requireRegistration
+                ? new IdentityDecision(IdentityOutcome.RegistrationRequired, "Server requires every player to register.")
+                : new IdentityDecision(IdentityOutcome.NotProtected, "No identity record for this username.");
+        }
 
         if (entry.PremiumRequired)
         {
@@ -59,7 +74,11 @@ public static class IdentityGate
 
         bool hasAnyProtection = entry.StaticAllowlist.Count > 0 || entry.LearnedIps.Count > 0 || entry.PasswordHash is not null;
         if (!hasAnyProtection)
-            return new IdentityDecision(IdentityOutcome.NotProtected, "Identity record has no active protection configured.");
+        {
+            return requireRegistration
+                ? new IdentityDecision(IdentityOutcome.RegistrationRequired, "Server requires every player to register.")
+                : new IdentityDecision(IdentityOutcome.NotProtected, "Identity record has no active protection configured.");
+        }
 
         if (entry.IsIpRecognized(remoteAddress))
             return new IdentityDecision(IdentityOutcome.Allow, "IP matched static allowlist or a learned IP.");

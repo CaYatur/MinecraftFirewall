@@ -68,6 +68,12 @@ public sealed class PlayStateInspector(
     /// carrying the backend's replies is writing to the same socket at the same time.</summary>
     private Stream? _clientWriter;
 
+    /// <summary>When the player entered Play state still needing to authenticate. The timeout is
+    /// measured from here rather than from the connection opening, because loading the world can take
+    /// a while and none of that time is the player ignoring a prompt they have not seen yet.</summary>
+    private DateTimeOffset? _authPromptedAt;
+    private DateTimeOffset _lastAuthReminder;
+
     // Session tallies, kept for the anomaly baseline. Deliberately counted here rather than in the
     // analyser: this is the one place every serverbound packet passes through exactly once.
     private readonly HashSet<int> _packetKinds = [];
@@ -204,10 +210,34 @@ public sealed class PlayStateInspector(
                         AnnouncePremiumLockSucceeded = false;
                         SendToPlayer(messages.PremiumLockSucceeded);
                     }
+
+                    if (graceAuth is not null && !_graceAuthResolved)
+                    {
+                        _authPromptedAt = _now();
+                        _lastAuthReminder = _now();
+                        SendToPlayer(graceAuth.NeedsRegistration ? messages.RegistrationPrompt : messages.LoginPrompt);
+                    }
                 }
 
                 await backendStream.WriteAsync(packet.RawFrame, ct).ConfigureAwait(false);
                 continue;
+            }
+
+            // Held still until they authenticate. This is what makes server-wide registration mean
+            // anything: without it the player is on the server, walking around and breaking blocks,
+            // while the proxy waits politely for a password. Only packets that would let them *act*
+            // are refused — keep-alives and the rest keep flowing, or the backend would disconnect
+            // them for timing out and they would never see the prompt.
+            if (graceAuth is not null && !_graceAuthResolved)
+            {
+                if (HandleAuthenticationTimeout())
+                    return;
+
+                if (packetIds.IsPlayerAction(packet.PacketId))
+                {
+                    RemindToAuthenticate();
+                    continue; // swallowed: never reaches the server
+                }
             }
 
             bool isChat = packet.PacketId == packetIds.PlayChatServerbound;
@@ -239,13 +269,10 @@ public sealed class PlayStateInspector(
 
             if (graceAuth is not null && !_graceAuthResolved)
             {
-                // The very first Play-state message (chat OR command) is the grace-auth check. A
-                // plain chat message here is an automatic failure — a valid /login can only ever
-                // arrive as a command.
-                HandleGraceAuthAttempt(isCommand ? text : null);
+                HandleAuthenticationAttempt(isCommand ? text : null);
                 if (DisconnectReason is not null)
                     return;
-                continue; // consumed either way — success or failure, never forwarded to the backend
+                continue; // consumed either way — never forwarded to the backend
             }
 
             if (isCommand && HandleCayaDevCheckCommand(text))
@@ -268,30 +295,98 @@ public sealed class PlayStateInspector(
         }
     }
 
-    /// <summary>Handles the mandatory first-message grace-auth check — only ever called once, for the
-    /// first Play-state chat/command message. <paramref name="commandText"/> is null when the first
-    /// message was plain chat (not a command), which is an automatic failure.</summary>
-    private void HandleGraceAuthAttempt(string? commandText)
+    /// <summary>
+    /// Handles one message from a player who has not authenticated yet.
+    ///
+    /// Two situations share this path and differ in exactly one way. A player who already has a
+    /// password gets a single attempt: a wrong one is the classic stolen-password probe, and letting
+    /// somebody guess repeatedly against a name they do not own is the whole thing being defended
+    /// against. A player who has never registered gets as many attempts as the timeout allows, because
+    /// there is nothing to guess — they are choosing a password, not proving one, and kicking them for
+    /// typing it wrong once would be hostile for no gain.
+    /// </summary>
+    private void HandleAuthenticationAttempt(string? commandText)
     {
-        _graceAuthResolved = true;
-
         var parsed = commandText is not null ? CayaDevCheckCommandParser.Parse(commandText) : null;
 
-        if (parsed is { Kind: CayaDevCheckCommandKind.Login } && PasswordHasher.Verify(parsed.Password, graceAuth!.PasswordHash))
+        if (graceAuth!.NeedsRegistration)
+        {
+            HandleRegistrationAttempt(parsed);
+            return;
+        }
+
+        _graceAuthResolved = true;
+
+        if (parsed is { Kind: CayaDevCheckCommandKind.Login } && PasswordHasher.Verify(parsed.Password, graceAuth.PasswordHash!))
         {
             graceAuth.Entry.LearnIp(remoteAddress, identityOptions.LearnedIpTtl, identityOptions.MaxLearnedIpsPerUsername);
             policyEngine.RegisterGraceAuthSuccess(remoteAddress, profile.Name, username);
             _isTrusted = true;
+            SendToPlayer(messages.AuthenticationAccepted);
             logger.LogInformation("[{Profile}] '{Username}' authenticated from a new IP {Ip} — trusted for {Ttl}.",
                 profile.Name, username, remoteAddress, identityOptions.LearnedIpTtl);
             return;
         }
 
-        logger.LogWarning("[{Profile}] grace-authentication FAILED for '{Username}' from {Ip} — first message was not a correct /login.",
+        logger.LogWarning("[{Profile}] authentication FAILED for '{Username}' from {Ip} — the message was not a correct /login.",
             profile.Name, username, remoteAddress);
         policyEngine.RegisterGraceAuthFailure(remoteAddress, profile.Name, username);
         HadViolation = true;
         DisconnectReason = messages.GraceAuthenticationFailed;
+    }
+
+    /// <summary>Registration, for a player the server has never seen. Not resolved until they succeed,
+    /// so a short password or a mistyped command simply prompts again.</summary>
+    private void HandleRegistrationAttempt(CayaDevCheckCommand? parsed)
+    {
+        if (parsed is not { Kind: CayaDevCheckCommandKind.Register })
+        {
+            SendToPlayer(messages.RegistrationPrompt);
+            return;
+        }
+
+        if (parsed.Password.Length < identityOptions.PasswordMinLength)
+        {
+            SendToPlayer(string.Format(messages.PasswordTooShort, identityOptions.PasswordMinLength));
+            return;
+        }
+
+        graceAuth!.Entry.PasswordHash = PasswordHasher.Hash(parsed.Password);
+        graceAuth.Entry.LearnIp(remoteAddress, identityOptions.LearnedIpTtl, identityOptions.MaxLearnedIpsPerUsername);
+
+        _graceAuthResolved = true;
+        _isTrusted = true;
+        SendToPlayer(messages.AuthenticationAccepted);
+
+        logger.LogInformation("[{Profile}] '{Username}' registered from {Ip} under server-wide registration.",
+            profile.Name, username, remoteAddress);
+    }
+
+    /// <summary>Repeats the prompt while the player is frozen. Minecraft chat scrolls, and a single
+    /// message sent at join time is gone by the time somebody looks up from their inventory.</summary>
+    private void RemindToAuthenticate()
+    {
+        DateTimeOffset now = _now();
+        if (now - _lastAuthReminder < identityOptions.AuthenticationReminderInterval)
+            return;
+
+        _lastAuthReminder = now;
+        SendToPlayer(graceAuth!.NeedsRegistration ? messages.RegistrationPrompt : messages.LoginPrompt);
+    }
+
+    /// <summary>Ends a connection that has been frozen too long. Returns true when the caller should
+    /// stop reading. A kick that explains itself is kinder than an indefinite freeze nobody can
+    /// interpret.</summary>
+    private bool HandleAuthenticationTimeout()
+    {
+        if (_authPromptedAt is not { } promptedAt || _now() - promptedAt < identityOptions.AuthenticationTimeout)
+            return false;
+
+        logger.LogInformation("[{Profile}] '{Username}' ({Ip}) did not authenticate within {Timeout} — disconnecting.",
+            profile.Name, username, remoteAddress, identityOptions.AuthenticationTimeout);
+
+        DisconnectReason = messages.AuthenticationTimedOut;
+        return true;
     }
 
     private bool HandleCayaDevCheckCommand(string commandText)

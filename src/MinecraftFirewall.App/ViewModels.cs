@@ -19,6 +19,8 @@ public sealed class ServerRow
         BackendHost = source.BackendHost;
         BackendPort = source.BackendPort;
         AllowedHostnamesText = string.Join(Environment.NewLine, source.AllowedHostnames);
+        VpnPolicy = source.VpnPolicy;
+        UseDatacenterList = source.UseDatacenterList;
         ProtectedNamesText = string.Join(Environment.NewLine, source.ProtectedUsernames.Select(p => p.ToString()));
     }
 
@@ -31,6 +33,17 @@ public sealed class ServerRow
     public int BackendPort { get; set; }
     public string AllowedHostnamesText { get; set; }
     public string ProtectedNamesText { get; set; }
+    public string VpnPolicy { get; set; }
+    public bool UseDatacenterList { get; set; }
+
+    /// <summary>Index into the UI's three-item list, in the order the ComboBox declares them. A value
+    /// the app does not recognise selects nothing rather than silently becoming the first option,
+    /// which would change the policy behind the user's back.</summary>
+    public int VpnPolicyIndex
+    {
+        get => VpnPolicy switch { "LogOnly" => 0, "BlockForProtectedUsernamesOnly" => 1, "BlockForEveryone" => 2, _ => -1 };
+        set => VpnPolicy = value switch { 0 => "LogOnly", 2 => "BlockForEveryone", _ => "BlockForProtectedUsernamesOnly" };
+    }
 
     public ServerProfileEdit ToEdit() => new()
     {
@@ -39,6 +52,8 @@ public sealed class ServerRow
         BackendHost = BackendHost.Trim(),
         BackendPort = BackendPort,
         AllowedHostnames = [.. SplitLines(AllowedHostnamesText)],
+        VpnPolicy = VpnPolicy,
+        UseDatacenterList = UseDatacenterList,
         ProtectedUsernames = [.. SplitLines(ProtectedNamesText).Select(ProtectedNameEdit.Parse).OfType<ProtectedNameEdit>()],
     };
 

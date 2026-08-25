@@ -12,7 +12,18 @@ namespace MinecraftFirewall.Proxy.Policy;
 /// <summary>Carried on an Allow decision when the connection is a self-registered CaYaDev-Check
 /// username on an unrecognized IP — the caller (ClientConnection/PlayStateInspector) must enforce
 /// that the first Play-state message is a correct /login, per IdentityGate's AllowPendingGraceAuthentication.</summary>
-public sealed record GraceAuthRequirement(IdentityEntry Entry, string PasswordHash);
+/// <summary>
+/// Carried on an Allow decision when the connection has to authenticate before it may do anything.
+///
+/// <see cref="PasswordHash"/> null means the player has no password yet and must register; non-null
+/// means they have one and must log in. Both are the same state as far as the inspector is concerned —
+/// the player is held still and nothing they do reaches the server — which is why they share a type
+/// rather than being two parallel paths that could drift apart.
+/// </summary>
+public sealed record GraceAuthRequirement(IdentityEntry Entry, string? PasswordHash)
+{
+    public bool NeedsRegistration => PasswordHash is null;
+}
 
 /// <summary>Carried on an Allow decision when the username is admin-declared PremiumRequired. "Allow"
 /// here means only "nothing in the IP/rate-limit/VPN layer objected" — the connection still has to
@@ -44,12 +55,14 @@ public sealed class PolicyEngine(
     IOptions<IpInfoOptions> ipInfoOptions,
     IOptions<DdosOptions> ddosOptions,
     IOptions<BotDefenseOptions> botOptions,
+    IOptions<IdentityOptions> identityOptions,
     ILogger<PolicyEngine> logger)
 {
     private readonly FirewallBanOptions _banOptions = banOptions.Value;
     private readonly IpInfoOptions _ipInfoOptions = ipInfoOptions.Value;
     private readonly DdosOptions _ddosOptions = ddosOptions.Value;
     private readonly BotDefenseOptions _botOptions = botOptions.Value;
+    private readonly IdentityOptions _identityOptions = identityOptions.Value;
 
     /// <summary>Checked once per connection, right after the Handshake is parsed, before the
     /// status/login branch — see HostnameMatcher for the matching rules and its important caveat
@@ -120,7 +133,7 @@ public sealed class PolicyEngine(
         }
 
         var entry = profile.IdentityStore.Find(username);
-        var identityDecision = IdentityGate.Evaluate(entry, remoteAddress);
+        var identityDecision = IdentityGate.Evaluate(entry, remoteAddress, _identityOptions.RequireRegistrationForEveryone);
 
         if (identityDecision.Outcome == IdentityOutcome.Deny)
         {
@@ -189,6 +202,15 @@ public sealed class PolicyEngine(
         if (identityDecision.Outcome == IdentityOutcome.AllowPendingGraceAuthentication)
         {
             return new PolicyDecision(true, identityDecision.Reason, new GraceAuthRequirement(entry!, entry!.PasswordHash!));
+        }
+
+        if (identityDecision.Outcome == IdentityOutcome.RegistrationRequired)
+        {
+            // The entry may not exist yet — this is a name nobody has registered. Creating it here
+            // rather than in the inspector keeps the store the single owner of identity records, and
+            // an entry with no password protects nothing on its own, so nothing is granted by it.
+            IdentityEntry registrationTarget = entry ?? profile.IdentityStore.GetOrCreate(username);
+            return new PolicyDecision(true, identityDecision.Reason, new GraceAuthRequirement(registrationTarget, null));
         }
 
         strikeTracker.Reset(remoteAddress);

@@ -7,7 +7,7 @@
 ; Guarded so build.ps1 can override it with /DAppVersion=... ; an unguarded #define would silently
 ; win over the command line and stamp the wrong version on the installer.
 #ifndef AppVersion
-  #define AppVersion   "1.3.2"
+  #define AppVersion   "1.4.0"
 #endif
 #define AppPublisher   "CaYaDev"
 #define AppUrl         "https://github.com/CaYatur/MinecraftFirewall"

@@ -174,6 +174,17 @@
                                                      VerticalScrollBarVisibility="Auto" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12"
                                                      Margin="0,0,0,14"/>
 
+                                            <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T FieldVpn}" Margin="0,14,0,0"/>
+                                            <TextBlock Style="{StaticResource Muted}" Text="{loc:T FieldVpnHint}"/>
+                                            <ComboBox SelectedIndex="{Binding VpnPolicyIndex, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                      HorizontalAlignment="Left" MinWidth="380" Margin="0,6,0,0">
+                                                <ComboBoxItem Content="{loc:T VpnLogOnly}"/>
+                                                <ComboBoxItem Content="{loc:T VpnProtectedOnly}"/>
+                                                <ComboBoxItem Content="{loc:T VpnEveryone}"/>
+                                            </ComboBox>
+                                            <CheckBox Content="{loc:T ChkDatacenter}" Margin="0,9,0,0"
+                                                      IsChecked="{Binding UseDatacenterList, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+
                                             <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T FieldAllowedDomains}"/>
                                             <TextBox Text="{Binding AllowedHostnamesText, UpdateSourceTrigger=PropertyChanged}"
                                                      AcceptsReturn="True" MinHeight="48" TextWrapping="NoWrap"
@@ -292,6 +303,18 @@
                                 <CheckBox x:Name="ChkDdos" Margin="0,13,0,0" Content="{loc:T ChkDdos}" Click="DefenseToggle_Changed" Tag="DdosProtection/Enabled"/>
                                 <CheckBox x:Name="ChkInspection" Margin="0,10,0,0" Content="{loc:T ChkInspection}" Click="DefenseToggle_Changed" Tag="DeepInspection/Enabled"/>
                                 <CheckBox x:Name="ChkInjection" Margin="0,10,0,0" Content="{loc:T ChkInjection}" Click="DefenseToggle_Changed" Tag="DeepInspection/ScanForInjectionPayloads"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T DefAuthTitle}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T DefAuthBlurb}"/>
+                                <CheckBox x:Name="ChkRequireRegistration" Margin="0,13,0,0" Content="{loc:T ChkRequireRegistration}"
+                                          Click="DefenseToggle_Changed" Tag="Identity/RequireRegistrationForEveryone"/>
+                                <Border Background="#12141A" BorderBrush="#242833" BorderThickness="1" CornerRadius="3" Padding="11,9" Margin="0,12,0,0">
+                                    <TextBlock Style="{StaticResource Muted}" Text="{loc:T AuthNote}"/>
+                                </Border>
                             </StackPanel>
                         </Border>
 

@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
 using MinecraftFirewall.Proxy.Defense;
+using MinecraftFirewall.Proxy.Identity;
 
 namespace MinecraftFirewall.Tests;
 
@@ -180,6 +181,7 @@ public class PolicyEngineAlertTests
             Options.Create(new IpInfoOptions()),
             Options.Create(new DdosOptions()),
             Options.Create(new BotDefenseOptions()),
+            Options.Create(new IdentityOptions()),
             NullLogger<PolicyEngine>.Instance);
     }
 

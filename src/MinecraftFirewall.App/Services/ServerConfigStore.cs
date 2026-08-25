@@ -51,6 +51,16 @@ public sealed class ServerProfileEdit
     public int BackendPort { get; set; } = 25566;
     public List<string> AllowedHostnames { get; set; } = [];
     public List<ProtectedNameEdit> ProtectedUsernames { get; set; } = [];
+
+    /// <summary>
+    /// LogOnly, BlockForProtectedUsernamesOnly, or BlockForEveryone. Kept as a string rather than a
+    /// copy of the service's enum so the editor never has to be rebuilt when the service gains a
+    /// policy — an unrecognised value round-trips untouched instead of being silently reset to the
+    /// default, which is what would happen if it were parsed.
+    /// </summary>
+    public string VpnPolicy { get; set; } = "BlockForProtectedUsernamesOnly";
+
+    public bool UseDatacenterList { get; set; }
 }
 
 /// <summary>
@@ -113,6 +123,8 @@ public sealed class ServerConfigStore
                         PublicPort = TryInt(node["PublicPort"], 25565),
                         BackendHost = node["BackendHost"]?.GetValue<string>() ?? "127.0.0.1",
                         BackendPort = TryInt(node["BackendPort"], 25566),
+                        VpnPolicy = node["VpnPolicy"]?.GetValue<string>() ?? "BlockForProtectedUsernamesOnly",
+                        UseDatacenterList = node["UseDatacenterList"]?.GetValue<bool>() ?? false,
                     };
 
                     if (node["AllowedHostnames"] is JsonArray hostnames)
@@ -165,6 +177,13 @@ public sealed class ServerConfigStore
                     ["PublicPort"] = profile.PublicPort,
                     ["BackendHost"] = profile.BackendHost,
                     ["BackendPort"] = profile.BackendPort,
+                    // Written back explicitly. Leaving them out did not leave them alone: the save
+                    // replaces the whole ServerProfiles array, so any key the editor did not know
+                    // about was deleted, and the service silently fell back to its compiled default.
+                    // Somebody who had set BlockForEveryone lost it the first time they renamed a
+                    // server, with nothing to indicate it had happened.
+                    ["VpnPolicy"] = profile.VpnPolicy,
+                    ["UseDatacenterList"] = profile.UseDatacenterList,
                     ["AllowedHostnames"] = new JsonArray([.. profile.AllowedHostnames.Select(h => (JsonNode)h!)]),
                     ["ProtectedUsernames"] = new JsonArray([.. profile.ProtectedUsernames.Select(ToNode)]),
                 });
@@ -204,7 +223,7 @@ public sealed class ServerConfigStore
     /// <summary>Sections the control panel needs, in the order they should be added back.</summary>
     private static readonly string[] ExpectedSections =
     [
-        "DdosProtection", "BotDefense", "Honeypot", "ThreatIntel", "DeepInspection", "AnomalyDetection",
+        "Identity", "DdosProtection", "BotDefense", "Honeypot", "ThreatIntel", "DeepInspection", "AnomalyDetection",
     ];
 
     /// <summary>The pristine copy the installer drops beside the live file. It is the source for

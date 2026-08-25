@@ -70,7 +70,8 @@ public class DeepInspectionPipelineTests
         var policy = new PolicyEngine(new VpnIntelligence(), new ConnectionRateLimiter(Options.Create(new RateLimitOptions())),
             banService, new StrikeTracker(), new FakeIpInfoClient(), alerts, DefenseTestFactory.CreateThreatIntelligence(), DefenseTestFactory.CreateScannerDetector(),
             banOptions, Options.Create(new IpInfoOptions()), Options.Create(new DdosOptions()),
-            Options.Create(new BotDefenseOptions()), NullLogger<PolicyEngine>.Instance);
+            Options.Create(new BotDefenseOptions()), Options.Create(new IdentityOptions()),
+            NullLogger<PolicyEngine>.Instance);
 
         var options = new InspectionOptions();
         tweak?.Invoke(options);
@@ -91,7 +92,7 @@ public class DeepInspectionPipelineTests
             .. MinecraftPacketBuilder.BuildCompressedEmptyPacketFrame(Ids.ConfigurationFinishConfigurationServerbound),
         ];
 
-        using var client = new MemoryStream([.. prologue, .. playFrames.SelectMany(f => f)]);
+        using var client = new DuplexTestStream([.. prologue, .. playFrames.SelectMany(f => f)]);
         var backend = new MemoryStream();
 
         try

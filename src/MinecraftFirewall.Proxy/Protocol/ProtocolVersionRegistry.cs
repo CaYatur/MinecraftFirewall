@@ -17,7 +17,8 @@ public sealed record PlayStatePacketIds(
     int PlaySwingServerbound,
     int PlaySignUpdateServerbound,
     int PlayEditBookServerbound,
-    int PlaySystemChatClientbound)
+    int PlaySystemChatClientbound,
+    int[] PlayActionServerbound)
 {
     /// <summary>True for any of the four serverbound movement packets — the ones carrying coordinates
     /// a malformed or hostile client can use to upset a server, and the ones a movement cheat has to
@@ -27,6 +28,18 @@ public sealed record PlayStatePacketIds(
         packetId == PlayMovePlayerPosRotServerbound ||
         packetId == PlayMovePlayerRotServerbound ||
         packetId == PlayMovePlayerStatusOnlyServerbound;
+
+    /// <summary>
+    /// True for the packets that let a player act on the world: moving, hitting, placing, opening
+    /// containers, using items.
+    ///
+    /// A blocklist rather than an allowlist, and deliberately so. Holding a player still while they
+    /// authenticate means refusing what they *do*, not refusing everything — a connection that stops
+    /// answering keep-alives is disconnected by the backend within thirty seconds, and the player would
+    /// see a timeout rather than the password prompt they were sent. Everything not named here keeps
+    /// flowing, so the session stays healthy while the player is frozen.
+    /// </summary>
+    public bool IsPlayerAction(int packetId) => Array.IndexOf(PlayActionServerbound, packetId) >= 0;
 
     /// <summary>Packets carrying free-form player text. These are what a payload scanner needs to see:
     /// every one of them ends up somewhere that interprets strings — a log line, a plugin, a sign, a
@@ -68,7 +81,26 @@ public static class ProtocolVersionRegistry
             PlaySwingServerbound: 0x3C,
             PlaySignUpdateServerbound: 0x3B,
             PlayEditBookServerbound: 0x17,
-            PlaySystemChatClientbound: 0x77),
+            PlaySystemChatClientbound: 0x77,
+            // Everything that lets a player *do* something in the world. Held back while a connection
+            // is waiting to authenticate — see PlayStateInspector.
+            PlayActionServerbound:
+            [
+                0x11, // container_click
+                0x19, // interact
+                0x1D, // move_player_pos
+                0x1E, // move_player_pos_rot
+                0x1F, // move_player_rot
+                0x20, // move_player_status_only
+                0x21, // move_vehicle
+                0x28, // player_action
+                0x2A, // player_input
+                0x34, // set_carried_item
+                0x37, // set_creative_mode_slot
+                0x3C, // swing
+                0x3F, // use_item_on
+                0x40, // use_item
+            ]),
     };
 
     public static bool TryGet(int protocolVersion, out PlayStatePacketIds ids) =>

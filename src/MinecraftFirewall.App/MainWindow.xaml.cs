@@ -364,6 +364,7 @@ public partial class MainWindow : Window
             ChkMovement.IsChecked = _config.GetBool(["DeepInspection", "AnalyseMovement"], false);
             ChkMovementKick.IsChecked = _config.GetBool(["DeepInspection", "KickOnMovementAnomaly"], false);
             ChkAnomaly.IsChecked = _config.GetBool(["AnomalyDetection", "Enabled"], false);
+            ChkRequireRegistration.IsChecked = _config.GetBool(["Identity", "RequireRegistrationForEveryone"], false);
 
             string action = _config.GetString(["BotDefense", "Action"], "LogOnly");
             BotDeny.IsChecked = string.Equals(action, "Deny", StringComparison.OrdinalIgnoreCase);
