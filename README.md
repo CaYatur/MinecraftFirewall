@@ -61,9 +61,8 @@ current status. What's implemented right now:
   deliberately *not* stored there — `appsettings.json` stays their single source of truth, so removing
   a name from config really does remove it.
 
-**Not implemented (designed for, never built):** ban-expiry persistence across restarts (an active OS
-firewall rule survives, but the app forgets when to lift it), and Discord webhook alerts (everything
-currently goes to the log file and console).
+**Not implemented (designed for, never built):** Discord webhook alerts — everything currently goes to
+the log file and console.
 
 **Verified end-to-end, not just with synthetic unit tests:** the compiled service was run against a
 real local Paper server, driven through the proxy's public port by a real protocol-correct client. This
@@ -82,9 +81,12 @@ protocol-correct implementation, not a mock, but it is still this project's own 
   machine. Hashes are PBKDF2, not plaintext, so this is not an emergency — just don't hand the file
   around. Deleting it resets every self-registration and un-pins every premium name (they get
   re-claimed by whoever next passes verification), so it is not a "safe to clear" cache.
-- **Firewall bans still don't survive a restart.** If the service restarts while an IP has an active
-  Windows Firewall block rule, the OS rule keeps blocking — no security regression — but the app
-  forgets its expiry and will never lift it. Remove such a rule by hand if you need it gone.
+- **Ban expiry survives restarts, but that specific path is untested against the real firewall.** The
+  expiry is stored in the firewall rule's own description and read back at startup, so bans are no
+  longer orphaned. Creating real rules requires Administrator rights, which this project's build
+  environment did not have — so the logic is unit-tested against a fake gateway, but the actual COM
+  round-trip was never exercised. If you rely on bans expiring, verify once from an elevated prompt:
+  trigger a ban, restart the service, and confirm the log says it adopted the existing ban.
 - **The premium *positive* path has not been verified against a real Microsoft account.** The denial
   path is confirmed end-to-end against a live server (a cracked client is challenged, checked against
   Mojang, denied, and receives a correctly-encrypted kick), the AES-CFB8 implementation is verified

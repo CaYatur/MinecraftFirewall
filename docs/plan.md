@@ -300,10 +300,31 @@ were designed for in this document but never built, plus one honest verification
      — wrong password was correctly kicked (proving the entry was really restored and gated, not just
      absent), and the correct password authenticated and re-learned the IP. The PBKDF2 hash round-trips
      and verifies.
-2. **Ban-expiry persistence.** `FirewallBanService._activeBans` is in-memory, so a restart while an IP
-   has a live Windows Firewall block rule loses that ban's expiry — the OS rule keeps blocking (no
-   security regression) but nothing will ever clean it up. Pre-existing since Stage 1; already spun
-   off as its own background task.
+2. ~~**Ban-expiry persistence**~~ — **done.** Previously a restart while an IP had a live Windows
+   Firewall block rule lost that ban's expiry: the OS rule kept blocking (no security regression) but
+   nothing would ever clean it up, so the IP stayed blocked forever. Pre-existing since Stage 1.
+   - **The firewall itself is the source of truth, not a second state file.** The expiry is written
+     into the rule's own `Description` (`MinecraftFirewall auto-ban until <ISO-8601>: <reason>`) and
+     `FirewallBanService` rebuilds `_activeBans` from `ListManagedBlockRules()` at startup. That
+     leaves exactly one place a ban can exist, so the two can't drift; an admin who deletes a rule in
+     `wf.msc` gets a service that agrees with them on the next start, and an admin *reading* the rules
+     sees the expiry in plain text without needing this app to interpret it.
+   - **`AddBlockRule` became `AddOrUpdateBlockRule`**, and `Ban()` now calls it on extension too. It
+     previously only bumped the in-memory expiry when extending an existing ban, so the rule still
+     carried the original timestamp — which, once the rule became the source of truth, would have
+     silently reverted every extension across a restart and lifted the ban early. Updating in place
+     rather than remove-then-add also avoids a window with no rule at all for a hostile IP.
+   - **Two edge cases handled deliberately:** a rule with no parseable expiry (written by an older
+     build) is adopted with a fresh default TTL rather than left untracked — that briefly over-blocks
+     an IP already judged hostile, but guarantees it is eventually cleaned up instead of blocking
+     forever; and an adopted address that is *now* on the never-ban list is removed at startup, so a
+     grown never-ban list wins over a rule written under the old one.
+   - **Not live-verified, and this one honestly can't be here:** creating real firewall rules needs
+     elevation, and this build environment is confirmed non-elevated. The logic is covered by tests
+     against the fake gateway (including a simulated restart over the same gateway), but the real COM
+     round-trip — specifically that `FirewallWASRule.Description` reads back byte-identical from
+     `INetFwPolicy2` — has not been exercised against the actual Windows Firewall. Worth one manual
+     check from an elevated prompt before relying on ban expiry in production.
 3. **Discord alerts** (`Alerts/DiscordAlertSender.cs` in the structure below) — never built. Everything
    currently goes to the log file and console only.
 4. **The premium positive path has not been verified live.** The negative path is confirmed

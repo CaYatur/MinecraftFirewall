@@ -48,6 +48,58 @@ public sealed class FirewallBanService : IDisposable
                 "firewall rule that should block the IP machine-wide will not be created until this is fixed.",
                 probeError);
         }
+
+        AdoptExistingBans();
+    }
+
+    /// <summary>
+    /// Rebuilds ban state from the firewall rules this app already owns, so a restart doesn't orphan
+    /// them. Without this, a restart left the OS rule in place and blocking (no security regression)
+    /// while the service forgot its expiry entirely — so CleanupExpired could never lift it, and the
+    /// IP stayed blocked forever.
+    ///
+    /// The firewall is used as the source of truth rather than a separate state file on purpose:
+    /// there is then only one place a ban can exist, so the two can't drift. An admin who deletes a
+    /// rule by hand in wf.msc gets a service that agrees with them on the next start, and an admin
+    /// reading the rules sees the expiry written in the description rather than needing this app to
+    /// interpret it for them.
+    /// </summary>
+    private void AdoptExistingBans()
+    {
+        int adopted = 0, undated = 0;
+
+        foreach (var rule in _gateway.ListManagedBlockRules())
+        {
+            if (_neverBanList.IsProtected(rule.Address))
+            {
+                // The never-ban list may have grown since the rule was created — honour the current
+                // list, not the one that was in effect back then.
+                _logger.LogWarning("Removing leftover firewall rule for {Ip}: it is now protected by the never-ban list.", rule.Address);
+                Unban(rule.Address);
+                continue;
+            }
+
+            if (rule.ExpiresAt is { } expiresAt)
+            {
+                _activeBans[rule.Address] = expiresAt;
+                adopted++;
+                continue;
+            }
+
+            // A rule from a build that didn't record expiries. Its intended lifetime is unknowable,
+            // so give it a fresh default TTL: that errs toward briefly over-blocking an IP something
+            // already judged hostile, and — unlike leaving it untracked — guarantees it eventually
+            // gets cleaned up instead of blocking forever.
+            _activeBans[rule.Address] = DateTimeOffset.UtcNow + _options.DefaultBanDuration;
+            undated++;
+        }
+
+        if (adopted > 0 || undated > 0)
+        {
+            _logger.LogInformation(
+                "Adopted {Adopted} existing firewall ban(s) from previous runs. {Undated} had no recorded expiry and were given a fresh {Ttl} TTL so they don't block forever.",
+                adopted, undated, _options.DefaultBanDuration);
+        }
     }
 
     public bool IsBanned(IPAddress address) => _activeBans.ContainsKey(address);
@@ -62,17 +114,14 @@ public sealed class FirewallBanService : IDisposable
 
         var ttl = duration ?? _options.DefaultBanDuration;
         var expiresAt = DateTimeOffset.UtcNow + ttl;
-
-        if (_activeBans.ContainsKey(address))
-        {
-            _activeBans[address] = expiresAt;
-            _logger.LogInformation("Extended ban for {Ip} to {ExpiresAt}. Reason: {Reason}", address, expiresAt, reason);
-            return BanResult.AlreadyBanned;
-        }
+        bool alreadyBanned = _activeBans.ContainsKey(address);
 
         try
         {
-            _gateway.AddBlockRule(address, reason);
+            // Called for an extension too, not just a fresh ban: the rule's own description is what a
+            // restart reads the expiry back from, so skipping this would quietly lose every extension
+            // across a restart and lift the ban early.
+            _gateway.AddOrUpdateBlockRule(address, reason, expiresAt);
         }
         catch (Exception ex)
         {
@@ -86,6 +135,13 @@ public sealed class FirewallBanService : IDisposable
         }
 
         _activeBans[address] = expiresAt;
+
+        if (alreadyBanned)
+        {
+            _logger.LogInformation("Extended ban for {Ip} to {ExpiresAt}. Reason: {Reason}", address, expiresAt, reason);
+            return BanResult.AlreadyBanned;
+        }
+
         _logger.LogWarning("Banned {Ip} until {ExpiresAt}. Reason: {Reason}", address, expiresAt, reason);
         return BanResult.Banned;
     }
@@ -107,6 +163,10 @@ public sealed class FirewallBanService : IDisposable
 
     public IReadOnlyCollection<(IPAddress Address, DateTimeOffset ExpiresAt)> ListActiveBans() =>
         _activeBans.Select(kv => (kv.Key, kv.Value)).ToArray();
+
+    /// <summary>Runs the expiry sweep immediately instead of waiting for the timer — lets tests assert
+    /// that an adopted ban really is cleaned up, rather than only that it was recorded.</summary>
+    internal void CleanupExpiredNow() => CleanupExpired();
 
     private void CleanupExpired()
     {
