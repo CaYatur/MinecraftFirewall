@@ -85,7 +85,14 @@ public sealed class IdentityOptions
     /// </summary>
     public bool DisconnectIfDamagedWhileAuthenticating { get; set; } = true;
 
-    /// <summary>Health at or below which a held player is pulled out, out of the usual twenty. Set
-    /// high on purpose: the point is to act on the first hit, not to referee a fair fight.</summary>
-    public float DamageDisconnectHealthThreshold { get; set; } = 19.5f;
+    /// <summary>
+    /// How much health a held player has to lose before they are pulled out, out of the usual twenty.
+    /// Half a heart by default: the point is to act on the first hit, not to referee a fair fight.
+    ///
+    /// A drop rather than a level, and that distinction is the whole of it. Measured against a fixed
+    /// level, somebody who simply logged off wounded would be kicked the instant they joined — told
+    /// that something had attacked them, when nothing had. The server announces their health on join,
+    /// and that first announcement is the baseline; damage is a decrease from it.
+    /// </summary>
+    public float DamageDisconnectMinimumDrop { get; set; } = 0.5f;
 }

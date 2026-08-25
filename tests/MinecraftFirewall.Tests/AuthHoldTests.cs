@@ -283,18 +283,34 @@ public class AuthHoldTests
         // costs them a reconnect, a death costs them everything they were carrying.
         Harness harness = Create(out AuthHold _, out _);
 
-        harness.Inspector.NoteBackendHealth(14f);
+        harness.Inspector.NoteBackendHealth(20f); // announced on join
+        harness.Inspector.NoteBackendHealth(14f); // something hit them
         string? disconnect = await RunAsync(harness, Movement(1));
 
         Assert.Equal(new MessagesOptions().DamagedWhileAuthenticating, disconnect);
     }
 
     [Fact]
-    public async Task FullHealthIsNotMistakenForDamage()
+    public async Task SomebodyWhoSimplyLoggedOffWoundedIsNotKicked()
+    {
+        // The reason this measures a fall rather than a level. A server announces a player's health as
+        // they join, so against a fixed threshold anyone who logged out hurt would be kicked the
+        // instant they came back — and told that something had attacked them, when nothing had.
+        Harness harness = Create(out AuthHold _, out _);
+
+        harness.Inspector.NoteBackendHealth(4f);
+        string? disconnect = await RunAsync(harness, Movement(1));
+
+        Assert.Null(disconnect);
+    }
+
+    [Fact]
+    public async Task HealingIsNotDamage()
     {
         Harness harness = Create(out AuthHold _, out _);
 
-        harness.Inspector.NoteBackendHealth(20f);
+        harness.Inspector.NoteBackendHealth(9f);
+        harness.Inspector.NoteBackendHealth(11f);
         string? disconnect = await RunAsync(harness, Movement(1));
 
         Assert.Null(disconnect);
@@ -307,6 +323,7 @@ public class AuthHoldTests
         Harness harness = Create(out AuthHold _, out _,
             identity: new IdentityOptions { DisconnectIfDamagedWhileAuthenticating = false });
 
+        harness.Inspector.NoteBackendHealth(20f);
         harness.Inspector.NoteBackendHealth(1f);
         string? disconnect = await RunAsync(harness, Movement(1));
 

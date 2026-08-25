@@ -112,6 +112,10 @@ public sealed class PlayStateInspector(
     private static readonly TimeSpan RestoreConfirmationTimeout = TimeSpan.FromSeconds(5);
     private volatile bool _damageSeenWhileHeld;
 
+    /// <summary>The last health the backend announced, against which the next one is compared. Only
+    /// ever read and written on the pump's thread, so it needs no synchronisation of its own.</summary>
+    private float? _healthBaseline;
+
     // Session tallies, kept for the anomaly baseline. Deliberately counted here rather than in the
     // analyser: this is the one place every serverbound packet passes through exactly once.
     private readonly HashSet<int> _packetKinds = [];
@@ -928,12 +932,22 @@ public sealed class PlayStateInspector(
     }
 
     /// <summary>
-    /// Reports the player's health, as observed on the backend's side of the connection. Called from
-    /// the pump rather than from this loop, hence the volatile field.
+    /// Reports the player's health, as observed on the backend's side of the connection.
+    ///
+    /// What counts is the decrease, not the number. The server announces a player's health as they
+    /// join, so measuring against a fixed level would kick anyone who had simply logged off wounded
+    /// — and tell them something had attacked them, which nothing had. The first announcement is
+    /// the baseline; only a fall from it is damage.
+    ///
+    /// Called from the pump rather than from the inspector's own loop. The baseline is only ever
+    /// touched here, on that one thread; the flag it sets crosses over, and is volatile for it.
     /// </summary>
     public void NoteBackendHealth(float health)
     {
-        if (health <= identityOptions.DamageDisconnectHealthThreshold)
+        float? previous = _healthBaseline;
+        _healthBaseline = health;
+
+        if (previous is { } before && before - health >= identityOptions.DamageDisconnectMinimumDrop)
             _damageSeenWhileHeld = true;
     }
 

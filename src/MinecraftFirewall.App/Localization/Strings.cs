@@ -87,6 +87,15 @@ public sealed class Strings : INotifyPropertyChanged
         ["VpnLogOnly"] = "Allow them, just note it in the log",
         ["VpnProtectedOnly"] = "Block them only for protected usernames (recommended)",
         ["VpnEveryone"] = "Block them for everyone",
+
+        ["FieldIpForwarding"] = "Real player IP addresses",
+        ["FieldIpForwardingHint"] =
+            "Without this, every player in your server's log and in every plugin is 127.0.0.1, so banning " +
+            "an IP there bans everyone. Your Minecraft server has to be set to expect the same option, and " +
+            "its port must stay on 127.0.0.1 — the security check looks for that.",
+        ["ForwardNone"] = "Off — the server sees this firewall's address",
+        ["ForwardProxyProtocol"] = "PROXY protocol (Paper: proxies.proxy-protocol: true)",
+        ["ForwardBungeeCord"] = "BungeeCord style (spigot.yml: bungeecord: true)",
         ["ChkDatacenter"] = "Also use the wider datacentre list (catches more, false-positives more)",
         ["DefAuthTitle"] = "Accounts and passwords (CaYaDev-Check)",
         ["DefAuthBlurb"] = "The AuthMe-style login system. Off, any player who types /register protects their own name and everyone else plays as before. On, nobody reaches your world until they have registered or logged in \u2014 they join, but cannot move, hit, place or open anything, and only chat gets through so they can type the command.",
@@ -276,6 +285,15 @@ public sealed class Strings : INotifyPropertyChanged
         ["VpnLogOnly"] = "İzin ver, sadece günlüğe not düş",
         ["VpnProtectedOnly"] = "Yalnızca korumalı kullanıcı adları için engelle (önerilir)",
         ["VpnEveryone"] = "Herkes için engelle",
+
+        ["FieldIpForwarding"] = "Oyuncuların gerçek IP adresleri",
+        ["FieldIpForwardingHint"] =
+            "Bu kapalıyken sunucu günlüğünde ve tüm eklentilerde her oyuncu 127.0.0.1 görünür; oradan bir IP " +
+            "yasaklamak herkesi yasaklar. Minecraft sunucunuzun da aynı seçeneği bekleyecek şekilde ayarlanması " +
+            "ve portunun 127.0.0.1 üzerinde kalması gerekir — güvenlik denetimi tam olarak buna bakar.",
+        ["ForwardNone"] = "Kapalı — sunucu bu güvenlik duvarının adresini görür",
+        ["ForwardProxyProtocol"] = "PROXY protokolü (Paper: proxies.proxy-protocol: true)",
+        ["ForwardBungeeCord"] = "BungeeCord tarzı (spigot.yml: bungeecord: true)",
         ["ChkDatacenter"] = "Daha geniş veri merkezi listesini de kullan (daha çok yakalar, daha çok yanılır)",
         ["DefAuthTitle"] = "Hesaplar ve şifreler (CaYaDev-Check)",
         ["DefAuthBlurb"] = "AuthMe tarzı giriş sistemi. Kapalıyken /register yazan oyuncu kendi adını korur, diğerleri eskisi gibi oynar. Açıkken hiç kimse kayıt olmadan veya giriş yapmadan dünyanıza ulaşamaz \u2014 sunucuya girerler ama hareket edemez, vuramaz, blok koyamaz, hiçbir şey açamazlar; yalnızca sohbet geçer, böylece komutu yazabilirler.",

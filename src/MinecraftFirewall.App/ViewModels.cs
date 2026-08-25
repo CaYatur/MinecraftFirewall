@@ -21,6 +21,7 @@ public sealed class ServerRow
         AllowedHostnamesText = string.Join(Environment.NewLine, source.AllowedHostnames);
         VpnPolicy = source.VpnPolicy;
         UseDatacenterList = source.UseDatacenterList;
+        IpForwarding = source.IpForwarding;
         ProtectedNamesText = string.Join(Environment.NewLine, source.ProtectedUsernames.Select(p => p.ToString()));
     }
 
@@ -35,6 +36,7 @@ public sealed class ServerRow
     public string ProtectedNamesText { get; set; }
     public string VpnPolicy { get; set; }
     public bool UseDatacenterList { get; set; }
+    public string IpForwarding { get; set; }
 
     /// <summary>Index into the UI's three-item list, in the order the ComboBox declares them. A value
     /// the app does not recognise selects nothing rather than silently becoming the first option,
@@ -43,6 +45,15 @@ public sealed class ServerRow
     {
         get => VpnPolicy switch { "LogOnly" => 0, "BlockForProtectedUsernamesOnly" => 1, "BlockForEveryone" => 2, _ => -1 };
         set => VpnPolicy = value switch { 0 => "LogOnly", 2 => "BlockForEveryone", _ => "BlockForProtectedUsernamesOnly" };
+    }
+
+    /// <summary>Index into the forwarding ComboBox. Same rule as the VPN one above: a value this
+    /// build does not recognise selects nothing rather than quietly becoming the first option, which
+    /// here would mean turning forwarding off and putting every player back on 127.0.0.1.</summary>
+    public int IpForwardingIndex
+    {
+        get => IpForwarding switch { "None" => 0, "ProxyProtocol" => 1, "BungeeCord" => 2, _ => -1 };
+        set => IpForwarding = value switch { 1 => "ProxyProtocol", 2 => "BungeeCord", _ => "None" };
     }
 
     public ServerProfileEdit ToEdit() => new()
@@ -54,6 +65,7 @@ public sealed class ServerRow
         AllowedHostnames = [.. SplitLines(AllowedHostnamesText)],
         VpnPolicy = VpnPolicy,
         UseDatacenterList = UseDatacenterList,
+        IpForwarding = IpForwarding,
         ProtectedUsernames = [.. SplitLines(ProtectedNamesText).Select(ProtectedNameEdit.Parse).OfType<ProtectedNameEdit>()],
     };
 
