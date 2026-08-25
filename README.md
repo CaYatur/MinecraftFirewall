@@ -1,200 +1,312 @@
-# MinecraftFirewall
+<p align="center">
+  <img src="docs/images/banner.svg" alt="MinecraftFirewall — a reverse-proxy firewall between players and a Minecraft server running in offline mode" width="100%">
+</p>
 
-Windows reverse-proxy firewall for Minecraft Java Edition servers running `online-mode=false` with no
-protection plugins. It sits in front of the real server (which binds to `127.0.0.1` only) and decides,
-per connection, whether to forward it — without any plugin/mod inside Minecraft itself.
+<p align="center">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-271%20passing-4ade80?style=flat-square">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078d4?style=flat-square">
+  <img alt=".NET" src="https://img.shields.io/badge/.NET-10-512bd4?style=flat-square">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
+</p>
 
-## Status: feature-complete (270 automated tests passing)
+If you run a Minecraft Java server with `online-mode=false`, Minecraft never checks who anyone is.
+Anyone can type your admin's username and join as them. **MinecraftFirewall** sits in front of your
+server and decides, per connection, who actually gets through — with no plugin or mod inside Minecraft
+at all.
 
-Everything originally planned is built. See [`docs/plan.md`](docs/plan.md) for the full design doc,
-including how each piece was verified and what honestly wasn't. What it does:
+It can even lock a username to its **real Microsoft/Mojang account** while your server stays in offline
+mode. The genuine owner joins normally and is never asked for a password; everyone else is refused.
 
-- **Multi-server reverse proxy** — one process fronts multiple Minecraft servers on the same machine,
-  each with its own public port, config-driven (`ServerProfiles` in `appsettings.json`).
-- **Protected usernames** — a static IP/CIDR allowlist per username, per server profile, for
-  admin-declared names (strict: unrecognized IP is a hard deny, no exceptions).
-- **CaYaDev-Check** — self-service `/register <password>` / `/login <password>` for any player, PBKDF2
-  hashed, with TTL/cap-bounded IP learning so a returning player from a known IP isn't re-prompted. An
-  unrecognized IP gets one grace-authentication attempt (first Play-state message must be a correct
-  `/login`) before being kicked and fast-tracked toward a ban.
-- **Command auditing** — Play-state chat/command packets are decoded (packet IDs sourced from Mojang's
-  own generated data report for the exact tested version, never guessed), logged, and checked against a
-  configurable dangerous-command list; a match from a non-trusted identity kicks and fast-track bans.
-- **VPN/datacenter IP detection** — free, MIT-licensed CIDR lists from
-  [X4BNet/lists_vpn](https://github.com/X4BNet/lists_vpn), refreshed daily, cached to disk, fails open
-  if the source is unreachable.
-- **Real-time secondary VPN/hosting signal (ipinfo.io)** — optional, off by default (needs a free
-  ipinfo.io token — verified empirically that one is required even for their "Lite" tier, it's not
-  keyless). Per-IP cached, fails open, scoped to protected usernames by default or every connection if
-  configured. Matches the returned ASN/organization name against a keyword list — this is a heuristic,
-  not a dedicated VPN-detection flag (that's a separate paid ipinfo product).
-- **Per-profile rate limiting** — sliding window, separate thresholds for status pings vs. login attempts.
-- **Allowed-domains restriction** — an optional per-profile allowlist of hostnames (exact or
-  `*.example.com` wildcard); a connection whose Handshake Server Address doesn't match one of them is
-  denied before it ever reaches the backend, even if the attacker knows the server's raw IP. **Read the
-  honesty note below before relying on this** — it stops IP-scanning bots and casual direct-IP joins,
-  but a client that deliberately fakes this field is not stopped by this check alone.
-- **Windows Firewall bans** — repeat offenders get a real, machine-wide block rule via the
-  `INetFwPolicy2` COM API (never `netsh` with interpolated input), with a TTL, a hardcoded never-ban list
-  (loopback/RFC1918/admin allowlist), and an in-process fallback if the service isn't running elevated.
-- **Configurable, English-by-default kick messages** — every player-facing disconnect string lives in
-  one `Messages` section of `appsettings.json` (English defaults, nothing hardcoded in the binary); a
-  ready-to-uncomment Turkish example ships alongside it.
-- **Admin CLI** (`MinecraftFirewall.Admin`) — `whitelist-add-me`, `list-bans`, `unban`, `require-premium`,
-  `reload`, `list-profiles`, talking to the running service over a named pipe that only Administrators
-  can connect to (must be run elevated). Every mutating command is in-memory only and says so in its own
-  output — it does not survive a service restart unless you also add it to `appsettings.json`.
-- **Premium account lock (the original strongest request)** — mark a username `"RequirePremium": true`
-  and it is permanently bound to its genuine Microsoft/Mojang account, even though the backend stays
-  `online-mode=false`. Such a connection gets a real encryption handshake (RSA + AES-CFB8) and a real
-  Mojang `hasJoined` session check during login; the first account to pass claims the name forever, and
-  every later connection must match that UUID. **The real owner is never shown a password prompt from
-  any IP** — their own launcher answers the cryptographic challenge silently. Nobody else can use the
-  name, and there is no fallback to any weaker check: if verification fails, or the feature is switched
-  off in config, the name is denied outright rather than dropping back to password/IP.
-- **Persistent identity store** — self-registered passwords, learned IPs, and premium UUID pins
-  survive a service restart (`C:\ProgramData\MinecraftFirewall\identity-store.json`, written with
-  inheritance disabled and access limited to Administrators, SYSTEM, and the service's own account,
-  since it holds password hashes). Admin-declared settings (`AllowedIps`, `RequirePremium`) are
-  deliberately *not* stored there — `appsettings.json` stays their single source of truth, so removing
-  a name from config really does remove it.
-- **Discord alerts** — optional webhook notifications for bans, a registered player authenticating
-  from a new IP, premium verification failures, and dangerous commands. Off by default; each event
-  type can be toggled. Alerting never blocks or fails a player's connection — if Discord is down the
-  alert is dropped and proxying carries on — and text that came off the wire is sanitized before
-  posting, so a player can't pick a name that pings your whole server.
+---
 
-**Verified end-to-end, not just with synthetic unit tests:** the compiled service was run against a
-real local Paper server, driven through the proxy's public port by a real protocol-correct client. This
-found and fixed a real bug in `PlayStateInspector`'s phase tracking that would have made CaYaDev-Check's
-grace-authentication fail for every legitimate reconnecting player — see `docs/plan.md`'s "Live
-end-to-end verification" note for the full story. Not exercised: an actual graphical Minecraft
-client/launcher (none was available in this environment) — the diagnostic client used is a real,
-protocol-correct implementation, not a mock, but it is still this project's own code.
+## Quick start
 
-## Honesty notes
+**1.** Download the latest release and unzip it somewhere permanent, e.g. `C:\MinecraftFirewall`.
 
-- This is defense-in-depth for a server that must stay `online-mode=false`. It does not replace Mojang
-  authentication.
-- **The identity store holds password hashes — treat the file accordingly.** It is written with
-  restrictive ACLs automatically, but it will end up in any backup or disk image you take of the
-  machine. Hashes are PBKDF2, not plaintext, so this is not an emergency — just don't hand the file
-  around. Deleting it resets every self-registration and un-pins every premium name (they get
-  re-claimed by whoever next passes verification), so it is not a "safe to clear" cache.
-- **Ban expiry survives restarts, but that specific path is untested against the real firewall.** The
-  expiry is stored in the firewall rule's own description and read back at startup, so bans are no
-  longer orphaned. Creating real rules requires Administrator rights, which this project's build
-  environment did not have — so the logic is unit-tested against a fake gateway, but the actual COM
-  round-trip was never exercised. If you rely on bans expiring, verify once from an elevated prompt:
-  trigger a ban, restart the service, and confirm the log says it adopted the existing ban.
-- **The premium *positive* path has not been verified against a real Microsoft account.** The denial
-  path is confirmed end-to-end against a live server (a cracked client is challenged, checked against
-  Mojang, denied, and receives a correctly-encrypted kick), the AES-CFB8 implementation is verified
-  against NIST SP 800-38A vectors for all three key sizes, and the logic is unit-tested — but no
-  genuine premium account was available in this build environment to confirm the "real owner is
-  admitted" half. If you own the account, test it before relying on it: mark your own username
-  `RequirePremium`, connect with a normal launcher, and confirm you get in without a prompt.
-- **Requires Administrator rights** to actually create Windows Firewall rules. Without it, bans are still
-  tracked and enforced in-process (denied at the proxy), but not blocked at the OS level — the service
-  logs a clear warning at startup if it can't reach the firewall.
-- **You must ensure the real Minecraft server's port is not reachable from outside the machine** — no
-  inbound firewall rule for it, no router port-forward. This is the single most important setup step;
-  the proxy provides no protection if the real server is still directly reachable.
-- **`AllowedHostnames` is not a cryptographic boundary.** The Handshake's Server Address field is
-  whatever string the connecting client sends — it is not bound to how the TCP connection was actually
-  made. A stock Minecraft client pointed at a raw IP (Direct Connect, or most scanning bots) sends that
-  IP as the Server Address and is correctly rejected. A custom/scripted client that deliberately fakes
-  this field to match an allowed domain, while still connecting straight to the server's IP, is **not**
-  stopped by this check alone. If you need that to be an actual hard guarantee rather than
-  defense-in-depth, put a TCP-fronting proxy (e.g. Cloudflare Spectrum, TCPShield) in front, point your
-  domain(s) at it, and add a Windows Firewall inbound rule on the public port that only permits that
-  fronting proxy's IP ranges — then a direct-IP connection dies at the OS firewall regardless of what
-  the Handshake claims. Also: if you're testing from the same machine, add `localhost` to
-  `AllowedHostnames`, or you will lock out your own local connections once the list is non-empty.
-- **The Admin CLI's ACL was verified by inspecting the constructed permission set and, in this
-  project's own build environment, by confirming a genuinely non-elevated process is refused a
-  connection** (`AdminAclTests`, `AdminPipeServerIntegrationTests`). It was not additionally verified
-  by spawning a separate non-admin OS process against a *running* service — if you want that level of
-  proof before trusting it in production, test it yourself: run the service elevated, then run
-  `MinecraftFirewall.Admin.exe` from a non-elevated prompt and confirm it's refused.
+**2.** In your server's `server.properties`, hide the real server from the internet:
 
-## Project layout
-
-```
-src/MinecraftFirewall.Proxy/       Windows Service — the proxy itself
-src/MinecraftFirewall.Admin/       Companion CLI — talks to the running service over an
-                                    Administrators-only named pipe (see "Admin CLI" below)
-tests/MinecraftFirewall.Tests/     xUnit tests — no real Minecraft server, no admin rights, no real firewall touched
-tools/MinecraftFirewall.ProtocolSpike/  Manual diagnostic client used to empirically verify wire behavior
-                                         against a real server (see docs/plan.md Stage 2, docs/protocol/)
-docs/protocol/                     Sourced packet-ID reference data (Mojang's own generated report)
+```properties
+server-ip=127.0.0.1
+server-port=25566
 ```
 
-## Setup
+> ⚠️ Also make sure port `25566` has **no** router port-forward and **no** inbound firewall rule.
+> This is the single most important step — the proxy protects nothing if players can still reach the
+> server directly.
 
-1. In each Minecraft server's `server.properties`, set `server-ip=127.0.0.1` and change `server-port` to
-   an internal-only port (e.g. `25566`).
-2. Confirm that internal port is **not** reachable from outside the machine (no firewall rule, no
-   port-forward).
-3. Edit `src/MinecraftFirewall.Proxy/appsettings.json` — add a `ServerProfiles` entry per server with the
-   public port, the backend host/port from step 1, and any protected usernames.
-   - Optional: to restrict which domain(s) players may connect through, set `AllowedHostnames`.
-     Point an A/CNAME record for each domain at the proxy machine's public IP first — the client just
-     needs to resolve the name before connecting, the proxy doesn't do DNS itself. Read the honesty
-     note above before relying on this for anything more than defense-in-depth.
-   - Optional: edit the top-level `Messages` section to change any kick/disconnect wording, or to
-     switch the shipped Turkish example block in for the English defaults.
-   - Optional: for the real-time ipinfo.io secondary signal, sign up free at
-     [ipinfo.io/signup](https://ipinfo.io/signup) and paste the token into the top-level `IpInfo`
-     section. Leave it empty to keep this signal off (default) — the X4BNet lists above still apply.
-   - Optional: for Discord notifications, create a webhook in your channel's settings (Edit Channel →
-     Integrations → Webhooks) and paste its URL into the top-level `Alerts` section. Leave it empty to
-     keep alerting off (default). Treat the URL as a secret — anyone holding it can post to that channel.
-   - Optional: to lock a username to its genuine Minecraft account owner, add it to that profile's
-     `ProtectedUsernames` with `"RequirePremium": true` (no `AllowedIps` needed). This needs no API
-     key — Mojang's session endpoint is public — and is on by default; the top-level `Premium` section
-     only exists to switch the whole mechanism off, which denies such names rather than downgrading
-     them. Read the two honesty notes above about restart behaviour and the unverified positive path
-     first.
-4. Build and run:
+**3.** Open `appsettings.json` and point a profile at it:
+
+```jsonc
+"ServerProfiles": [
+  {
+    "Name": "MyServer",
+    "PublicPort": 25565,      // what players connect to
+    "BackendHost": "127.0.0.1",
+    "BackendPort": 25566,     // the real server, from step 2
+    "ProtectedUsernames": [
+      { "Username": "YourAdminName", "RequirePremium": true }
+    ]
+  }
+]
+```
+
+**4.** Start your Minecraft server, then start the firewall:
 
 ```bash
-dotnet build
-dotnet run --project src/MinecraftFirewall.Proxy
+MinecraftFirewall.Proxy.exe
 ```
 
-For production use, install it as a Windows Service (`sc.exe create` or `New-Service`) running as
-Administrator so firewall bans actually take effect.
+```
+[10:14:02 INF] [MyServer] listening on port 25565, forwarding to 127.0.0.1:25566.
+[10:14:03 INF] Refreshed .../output/vpn/ipv4.txt (6567 ranges).
+[10:14:03 INF] Refreshed .../output/datacenter/ipv4.txt (29062 ranges).
+```
+
+**5.** Players still connect to your normal address on port `25565`. Nothing changes for them.
+
+> **Run it as Administrator** if you want real machine-wide firewall bans. Without elevation everything
+> still works, but repeat offenders are only blocked inside the proxy — it says so clearly at startup.
+
+To keep it running permanently, install it as a Windows service:
+
+```bash
+sc.exe create MinecraftFirewall binPath= "C:\MinecraftFirewall\MinecraftFirewall.Proxy.exe" start= auto
+```
+
+---
+
+## What happens to a connection
+
+```mermaid
+flowchart TD
+    A[Player connects] --> B{IP already banned?}
+    B -->|yes| X[Refused]
+    B -->|no| C{Connecting through<br/>an allowed domain?}
+    C -->|no| X
+    C -->|yes| D{Too many attempts<br/>from this IP?}
+    D -->|yes| X
+    D -->|no| E{Is this username<br/>protected?}
+
+    E -->|"not protected"| PASS[Forwarded to your server]
+    E -->|"premium-locked"| F{Real Mojang account,<br/>and the right one?}
+    E -->|"IP allowlist"| G{IP on the list?}
+    E -->|"has a password"| H{IP recognised<br/>from before?}
+
+    F -->|no| X
+    F -->|yes| PASS
+    G -->|no| X
+    G -->|yes| I
+    H -->|yes| I
+    H -->|no| J["Joins, but the first thing they type<br/>must be /login &lt;password&gt;"]
+    J -->|wrong| X
+    J -->|correct| I
+
+    I{VPN or datacenter IP?} -->|"yes, and blocked by policy"| X
+    I -->|no| PASS
+
+    style X fill:#7f1d1d,stroke:#dc2626,color:#fff
+    style PASS fill:#14532d,stroke:#22c55e,color:#fff
+    style J fill:#78350f,stroke:#f59e0b,color:#fff
+```
+
+Everything after that point is relayed byte-for-byte, so your server behaves exactly as it always did.
+
+---
+
+## Premium account lock
+
+This is the headline feature. Mark a username as premium and it belongs to one real Microsoft account,
+permanently — even though your server never leaves offline mode.
+
+```jsonc
+{ "Username": "YourAdminName", "RequirePremium": true }
+```
+
+```mermaid
+sequenceDiagram
+    participant P as Player
+    participant F as MinecraftFirewall
+    participant M as Mojang
+    participant S as Your server
+
+    P->>F: I'm "YourAdminName"
+    Note over F: This name is premium-locked
+    F->>P: Encryption Request (RSA challenge)
+    P->>F: Encryption Response
+    Note over P,F: A real launcher answers this<br/>automatically — no prompt, no password
+    F->>M: hasJoined? Is this a valid session?
+
+    alt Genuine owner
+        M-->>F: Yes — UUID abc123
+        Note over F: Matches the UUID this<br/>name is pinned to
+        F->>S: Forward the connection
+        S-->>P: Welcome back
+    else Anyone else
+        M-->>F: No valid session
+        F-->>P: ❌ Refused — no password fallback
+    end
+```
+
+**What this means in practice**
+
+| | |
+|---|---|
+| The real owner | Joins normally from any IP. Never sees a password prompt, ever. |
+| A cracked client | Refused. It cannot answer the cryptographic challenge. |
+| Someone with a *different* real account | Refused — the name is pinned to one UUID. |
+| Mojang is down | Refused, deliberately. Falling back to "let them in" would defeat the point. |
+
+> The first account to successfully verify claims the name **permanently**. Set this up before someone
+> else takes the name — it can't retroactively un-claim a name an attacker already grabbed.
+
+---
+
+## Everything it does
+
+| Feature | What it's for |
+|---|---|
+| 🔐 **Premium account lock** | Bind a username to its real Microsoft account, on an offline-mode server. |
+| 🧾 **CaYaDev-Check** | Self-service `/register` and `/login` for any player. PBKDF2 hashed, remembers known IPs so nobody is nagged twice. |
+| 📋 **Protected usernames** | Pin a name to specific IPs or CIDR ranges. Unknown IP is a hard refusal. |
+| 🌐 **VPN & datacenter blocking** | Free MIT-licensed IP lists, refreshed daily, cached to disk. Optional real-time ipinfo.io lookup on top. |
+| 🚪 **Allowed domains** | Only accept players arriving through your domain — IP-scanning bots get nothing. |
+| ⛔ **Real firewall bans** | Repeat offenders get a genuine machine-wide Windows Firewall rule, with an expiry that survives restarts. |
+| 🕵️ **Command auditing** | Play-state commands are logged and checked against a dangerous-command list. |
+| 🚦 **Rate limiting** | Separate sliding windows for server-list pings and login attempts. |
+| 💬 **Discord alerts** | Optional webhook for bans, new trusted IPs, and failed premium checks. |
+| 🖥️ **Multi-server** | One process in front of as many servers as you like, each on its own port. |
+| 🗣️ **Every message editable** | All player-facing text lives in config. English by default, Turkish example included. |
+
+---
+
+## What players actually see
+
+A player registering a password for their name:
+
+```
+[10:22:15 INF] [MyServer] login allowed for 'Steve' from 203.0.113.44.
+[10:22:16 INF] [MyServer] 'Steve' registered with CaYaDev-Check from 203.0.113.44.
+```
+
+Someone trying that same name from a new IP without the password:
+
+```
+[10:31:07 WRN] [MyServer] grace-authentication FAILED for 'Steve' from 198.51.100.9
+               — first message was not a correct /login.
+```
+
+A cracked client going after a premium-locked name:
+
+```
+[10:44:51 INF] Mojang hasJoined check for 'YourAdminName' found no valid session — denying.
+[10:44:51 WRN] [MyServer] premium verification FAILED for 'YourAdminName' from 198.51.100.9
+```
+
+The player sees a normal Minecraft kick screen with whatever wording you configured.
+
+---
+
+## Configuration
+
+Everything lives in `appsettings.json`. Every section is optional — leave one out and sensible defaults
+apply.
+
+| Section | What it controls |
+|---|---|
+| `ServerProfiles` | Your servers, ports, protected usernames, allowed domains. **The only section you must edit.** |
+| `Messages` | Every kick/disconnect message. English defaults; a Turkish block ships commented out. |
+| `Premium` | Master switch for premium verification (on by default, needs no API key). |
+| `VpnIntel` / `IpInfo` | VPN list sources; optional ipinfo.io token for the real-time signal. |
+| `RateLimit` / `FirewallBan` / `NeverBan` | Thresholds, ban duration, and IPs that can never be banned. |
+| `Alerts` | Discord webhook URL and which events to report. Off until you add a URL. |
+| `IdentityPersistence` | Where learned passwords, IPs and premium pins are stored between restarts. |
+
+### Turkish messages
+
+Open the `Messages` section — a full Turkish translation ships commented out. Swap the values in and
+restart:
+
+```jsonc
+"Messages": {
+  "GenericDenied": "Bu bağlantı MinecraftFirewall tarafından engellendi.",
+  "HostnameNotAllowed": "Bu sunucuya sadece izin verilen adres(ler) üzerinden bağlanılabilir.",
+  "GraceAuthenticationFailed": "Kimlik doğrulama başarısız. Bu IP tanınmıyor ve doğru şifre girilmedi."
+}
+```
+
+---
 
 ## Admin CLI
 
-The service must already be running (as a service or via `dotnet run`) for the CLI to have anything to
-talk to. Run the CLI itself **elevated** — the pipe refuses non-Administrator connections outright:
+Run **elevated** — the control pipe refuses non-Administrator connections outright.
 
 ```bash
-dotnet run --project src/MinecraftFirewall.Admin -- list-profiles
-dotnet run --project src/MinecraftFirewall.Admin -- list-bans
-dotnet run --project src/MinecraftFirewall.Admin -- unban 203.0.113.7
-dotnet run --project src/MinecraftFirewall.Admin -- whitelist-add-me TestServer YourAdminUsername 203.0.113.7
-dotnet run --project src/MinecraftFirewall.Admin -- require-premium TestServer YourAdminUsername
-dotnet run --project src/MinecraftFirewall.Admin -- reload
+MinecraftFirewall.Admin.exe list-bans
+MinecraftFirewall.Admin.exe unban 203.0.113.7
+MinecraftFirewall.Admin.exe list-profiles
+MinecraftFirewall.Admin.exe whitelist-add-me MyServer YourAdminName 203.0.113.7
+MinecraftFirewall.Admin.exe require-premium MyServer YourAdminName
+MinecraftFirewall.Admin.exe reload
 ```
 
-**`require-premium` is the one command you must follow up in config immediately.** Every other mutating
-command lapsing on restart fails *closed* — someone gets denied, which is annoying but safe.
-`require-premium` lapsing fails *open*: a name you believed was locked to its real owner becomes usable
-by anyone again. And it looks fine in the meantime — if the genuine owner connects before you edit the
-config, their UUID pin really is recorded, but a pin is only consulted while the name is still marked
-premium, so a restart leaves the name unprotected with an inert pin sitting beside it. Add
-`"RequirePremium": true` to `appsettings.json` in the same sitting.
+> **`require-premium` must be followed up in `appsettings.json` straight away.** Every other command
+> lapsing on restart just denies someone — safe. This one lapsing leaves the name **open to anyone
+> again**. Add `"RequirePremium": true` in the same sitting.
 
-`whitelist-add-me` and `require-premium` change in-memory state only — the command's own output says so.
-To make either permanent, add it to that server's `ProtectedUsernames` in `appsettings.json` (the latter
-via `"RequirePremium": true`) and restart the service. `reload` only refreshes the VPN/datacenter IP
-lists on demand; it does not re-read `ServerProfiles` or anything else — that still needs a restart.
+`reload` only refreshes the VPN/datacenter IP lists. Ports and profiles still need a restart.
 
-## Tests
+---
+
+## Honest limitations
+
+This section is deliberately not marketing copy. Read it before relying on any of this.
+
+- **This is defence in depth, not Mojang authentication.** It raises the cost of impersonation
+  enormously; it does not make an offline-mode server equivalent to an online-mode one.
+- **Premium lock protects a name from the moment you enable it.** It cannot take back a name an
+  attacker already claimed in plain offline mode beforehand.
+- **Your server must be unreachable directly.** If players can still connect to port `25566`, none of
+  this applies to them. Verify it yourself; the proxy cannot check this for you.
+- **`AllowedHostnames` is not a cryptographic boundary.** A stock client pointed at your raw IP is
+  correctly refused, but a custom client that *lies* about which domain it used is not stopped by this
+  check alone. For a hard guarantee, put a TCP-fronting proxy (Cloudflare Spectrum, TCPShield) in front
+  and firewall the public port to its IP ranges.
+- **Your server still sees its own offline UUID** for a premium-verified player, not their real one.
+  Verification is authoritative for *access*, not for what your world files record.
+- **The identity store holds password hashes.** They're PBKDF2, not plaintext, but don't hand the file
+  around. Deleting it un-pins every premium name.
+- **Two things were never tested in this project's build environment**, and are called out rather than
+  glossed over: a *successful* premium login by a genuine Microsoft account (there was no real account
+  available — the *refusal* path is verified end-to-end against a live server), and the real Windows
+  Firewall COM path (rule creation needs elevation). Both are covered by automated tests; neither was
+  observed against the real thing. If you depend on them, verify once yourself.
+
+---
+
+## Building from source
 
 ```bash
+git clone https://github.com/CaYatur/MinecraftFirewall.git
+cd MinecraftFirewall
 dotnet test
+dotnet run --project src/MinecraftFirewall.Proxy
 ```
+
+Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download). Windows only — it uses the Windows
+Firewall COM API and Windows named-pipe ACLs.
+
+```
+src/MinecraftFirewall.Proxy/    The service itself
+src/MinecraftFirewall.Admin/    Companion CLI
+tests/MinecraftFirewall.Tests/  271 tests — no real server, no admin rights, no real firewall touched
+tools/                          Diagnostic client used to verify wire behaviour against a real server
+docs/plan.md                    Full design doc: every decision, and how each was verified
+```
+
+---
+
+## License
+
+[MIT](LICENSE) — free to use, modify and redistribute.
+
+VPN and datacenter IP data comes from [X4BNet/lists_vpn](https://github.com/X4BNet/lists_vpn), also MIT.

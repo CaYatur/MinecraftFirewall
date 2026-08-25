@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" width="1200" height="340" role="img" aria-label="MinecraftFirewall — a reverse-proxy firewall that sits between players and a Minecraft server running in offline mode">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="55%" stop-color="#111c33"/>
+      <stop offset="100%" stop-color="#0b1220"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#4ade80"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#ffffff" stroke-opacity="0.035" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="340" rx="14" fill="url(#bg)"/>
+  <rect width="1200" height="340" rx="14" fill="url(#grid)"/>
+  <rect x="0" y="0" width="1200" height="4" rx="2" fill="url(#accent)"/>
+
+  <!-- Title block -->
+  <text x="72" y="104" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="46" font-weight="700" fill="#f8fafc">
+    Minecraft<tspan fill="url(#accent)">Firewall</tspan>
+  </text>
+  <text x="72" y="142" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="19" fill="#94a3b8">
+    Keep your usernames yours — on a server that stays <tspan font-family="ui-monospace, 'Cascadia Code', Consolas, monospace" fill="#cbd5e1">online-mode=false</tspan>
+  </text>
+
+  <!-- Topology row -->
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">
+    <!-- Players -->
+    <rect x="72" y="196" width="196" height="88" rx="10" fill="#111f38" stroke="#1e3a5f" stroke-width="1.5"/>
+    <text x="170" y="230" text-anchor="middle" font-size="15" font-weight="600" fill="#e2e8f0">Players</text>
+    <text x="170" y="254" text-anchor="middle" font-size="12.5" fill="#7c93b0">real · cracked · bots</text>
+
+    <path d="M280 240 H336" stroke="#334f75" stroke-width="2" fill="none"/>
+    <path d="M330 234 L340 240 L330 246 Z" fill="#334f75"/>
+
+    <!-- Firewall -->
+    <rect x="348" y="182" width="236" height="116" rx="10" fill="#0e2a24" stroke="#22d3ee" stroke-width="1.8"/>
+    <g transform="translate(378 220)">
+      <path d="M16 0 L32 7 V19 C32 30 25 38 16 42 C7 38 0 30 0 19 V7 Z" fill="none" stroke="url(#accent)" stroke-width="2.2"/>
+      <path d="M8 20 L14 26 L25 14" fill="none" stroke="url(#accent)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <text x="432" y="228" font-size="15" font-weight="600" fill="#e2e8f0">MinecraftFirewall</text>
+    <text x="432" y="250" font-size="12.5" fill="#7c93b0">Windows service</text>
+    <text x="432" y="270" font-size="12.5" fill="#7c93b0">public port · one per server</text>
+
+    <path d="M596 240 H652" stroke="#334f75" stroke-width="2" fill="none"/>
+    <path d="M646 234 L656 240 L646 246 Z" fill="#334f75"/>
+
+    <!-- Server -->
+    <rect x="664" y="196" width="212" height="88" rx="10" fill="#111f38" stroke="#1e3a5f" stroke-width="1.5"/>
+    <text x="770" y="228" text-anchor="middle" font-size="15" font-weight="600" fill="#e2e8f0">Your server</text>
+    <text x="770" y="252" text-anchor="middle" font-family="ui-monospace, 'Cascadia Code', Consolas, monospace" font-size="12" fill="#7c93b0">127.0.0.1 · no plugins</text>
+  </g>
+
+  <!-- Feature chips -->
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12.5">
+    <rect x="924" y="188" width="204" height="30" rx="15" fill="#132b45" stroke="#1e4d6b" stroke-width="1"/>
+    <text x="1026" y="207" text-anchor="middle" fill="#7dd3fc">Premium account lock</text>
+
+    <rect x="924" y="226" width="204" height="30" rx="15" fill="#132b45" stroke="#1e4d6b" stroke-width="1"/>
+    <text x="1026" y="245" text-anchor="middle" fill="#7dd3fc">VPN / proxy detection</text>
+
+    <rect x="924" y="264" width="204" height="30" rx="15" fill="#132b45" stroke="#1e4d6b" stroke-width="1"/>
+    <text x="1026" y="283" text-anchor="middle" fill="#7dd3fc">Real firewall bans</text>
+  </g>
+</svg>
