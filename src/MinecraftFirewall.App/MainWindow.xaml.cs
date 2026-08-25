@@ -366,6 +366,16 @@ public partial class MainWindow : Window
             ChkAnomaly.IsChecked = _config.GetBool(["AnomalyDetection", "Enabled"], false);
             ChkRequireRegistration.IsChecked = _config.GetBool(["Identity", "RequireRegistrationForEveryone"], false);
 
+            string anomalyAction = _config.GetString(["AnomalyDetection", "Action"], "Report");
+            AnomalyActionBox.SelectedIndex = anomalyAction switch
+            {
+                "Score" => 1,
+                "RequireReauthentication" => 2,
+                "Throttle" => 3,
+                "Ban" => 4,
+                _ => 0,
+            };
+
             string action = _config.GetString(["BotDefense", "Action"], "LogOnly");
             BotDeny.IsChecked = string.Equals(action, "Deny", StringComparison.OrdinalIgnoreCase);
             BotLogOnly.IsChecked = !BotDeny.IsChecked!.Value;
@@ -451,6 +461,15 @@ public partial class MainWindow : Window
             LoadDefenseSettings();
 
         await Task.CompletedTask;
+    }
+
+    private void AnomalyAction_Changed(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (_suppressEvents || AnomalyActionBox.SelectedItem is not ComboBoxItem { Tag: string action })
+            return;
+
+        (bool success, string message) = _config.SetString(["AnomalyDetection", "Action"], action);
+        Toast(success ? Strings.Current["SavedNeedsRestart"] : message, success);
     }
 
     private void BotAction_Changed(object sender, RoutedEventArgs e)

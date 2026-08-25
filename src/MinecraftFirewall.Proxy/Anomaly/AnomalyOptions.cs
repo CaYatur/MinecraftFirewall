@@ -24,6 +24,50 @@ public sealed class AnomalyOptions
     public bool Enabled { get; set; }
 
     /// <summary>
+    /// What a repeated anomaly is allowed to cause, in increasing order of consequence:
+    ///
+    ///   Report                  write it down, and nothing else
+    ///   Score                   count it towards the bot score, alongside the behavioural signals
+    ///   RequireReauthentication ask the address to log in again next time, even from a known address
+    ///   Throttle                tighten that address's connection limits for a while
+    ///   Ban                     a real firewall ban for ActionDuration
+    ///
+    /// Report is the default and the only one that cannot be wrong. Everything above it acts on a
+    /// statistical claim — "unlike this server's other connections" — which is not the same as
+    /// "malicious" and never becomes it. Score is the natural second step: it lets an oddity tip a
+    /// connection that was already behaving strangely without ever deciding anything on its own.
+    /// </summary>
+    public AnomalyAction Action { get; set; } = AnomalyAction.Report;
+
+    /// <summary>
+    /// Anomalous sessions from one address before anything happens.
+    ///
+    /// Sessions are odd for innocent reasons constantly — a short visit, a bad connection, someone
+    /// idling in a menu. Acting on one would produce a firewall that punishes unusual play. A pattern
+    /// is a different claim, and this is what makes it one.
+    /// </summary>
+    public int RepeatedAnomaliesBeforeAction { get; set; } = 3;
+
+    /// <summary>How long anomalies keep counting towards that total, measured from the most recent.</summary>
+    public TimeSpan AnomalyMemory { get; set; } = TimeSpan.FromHours(6);
+
+    /// <summary>
+    /// How long the model must have been trained before it is allowed to affect anyone.
+    ///
+    /// A freshly-built baseline is at its least reliable exactly when it is newest — it has seen
+    /// whoever happened to be online while it was learning and nobody else. Waiting lets the picture of
+    /// "normal" fill out before anything it says costs a player anything.
+    /// </summary>
+    public TimeSpan SettlingPeriod { get; set; } = TimeSpan.FromHours(1);
+
+    /// <summary>How long a throttle, a re-authentication requirement or a ban lasts.</summary>
+    public TimeSpan ActionDuration { get; set; } = TimeSpan.FromHours(6);
+
+    /// <summary>Bot-score contribution when <see cref="Action"/> is Score. Deliberately below the
+    /// refusal threshold on its own — it is meant to tip a decision, not make one.</summary>
+    public int ScoreWeight { get; set; } = 40;
+
+    /// <summary>
     /// Connections that must be observed before anything is scored.
     ///
     /// Not a performance figure — a poisoning defence. A model built from twenty connections during a

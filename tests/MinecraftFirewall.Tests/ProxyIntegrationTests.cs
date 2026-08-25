@@ -67,10 +67,9 @@ public class ProxyIntegrationTests : IAsyncLifetime
         _banService = new FirewallBanService(banOptions, neverBanList, gateway, new RecordingAlertSender(), NullLogger<FirewallBanService>.Instance);
         var strikeTracker = new StrikeTracker();
 
-        _policyEngine = new PolicyEngine(vpnIntel, rateLimiter, _banService, strikeTracker, new FakeIpInfoClient(), new RecordingAlertSender(),
-            DefenseTestFactory.CreateThreatIntelligence(), DefenseTestFactory.CreateScannerDetector(), banOptions, Options.Create(new IpInfoOptions()),
-            Options.Create(new DdosOptions()), Options.Create(new BotDefenseOptions()), Options.Create(new IdentityOptions()),
-            NullLogger<PolicyEngine>.Instance);
+        // The rate limiter is the point of one of these tests, so it is passed rather than defaulted.
+        _policyEngine = DefenseTestFactory.CreatePolicyEngine(_banService, rateLimiter: rateLimiter,
+            banOptions: new FirewallBanOptions { StrikesBeforeBan = 100 });
 
         var identityOptions = new IdentityOptions();
         var dangerousCommands = new DangerousCommandOptions().Commands;

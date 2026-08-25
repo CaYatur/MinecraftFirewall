@@ -57,10 +57,14 @@ builder.Services.AddSingleton<IAlertSender>(sp =>
 
 builder.Services.AddSingleton<VpnIntelligence>();
 builder.Services.AddSingleton<ThreatIntelligence>();
-builder.Services.AddSingleton<ConnectionGovernor>();
 builder.Services.AddSingleton<BotDetector>();
 builder.Services.AddSingleton<ScannerDetector>();
 builder.Services.AddSingleton<AnomalyDetector>();
+
+// The responder is the detector's, not a second one: registering it separately would give the policy
+// engine a different instance from the one recording the anomalies, and every action would be decided
+// against an empty history.
+builder.Services.AddSingleton(sp => sp.GetRequiredService<AnomalyDetector>().Responder);
 builder.Services.AddSingleton<IIpInfoClient, IpInfoClient>();
 
 // One RSA keypair for the whole process, generated at startup — the same thing a real Notchian
@@ -75,6 +79,18 @@ builder.Services.AddSingleton<IWindowsFirewallGateway, WindowsFirewallGateway>()
 builder.Services.AddSingleton<FirewallBanService>();
 builder.Services.AddSingleton<StrikeTracker>();
 builder.Services.AddSingleton<PolicyEngine>();
+
+// Wired here rather than injected, so the accept path keeps knowing nothing about models.
+builder.Services.AddSingleton(sp =>
+{
+    var governor = new ConnectionGovernor(
+        sp.GetRequiredService<IOptions<DdosOptions>>(),
+        sp.GetRequiredService<ILogger<ConnectionGovernor>>());
+
+    AnomalyResponder responder = sp.GetRequiredService<AnomalyResponder>();
+    governor.IsAddressThrottled = address => responder.IsThrottled(address, DateTimeOffset.UtcNow);
+    return governor;
+});
 
 var profileConfigs = builder.Configuration.GetSection("ServerProfiles").Get<List<ServerProfileConfig>>() ?? [];
 var profiles = ServerProfileFactory.Build(profileConfigs);

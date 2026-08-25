@@ -1,5 +1,6 @@
 using System.Net;
 using MinecraftFirewall.Proxy.Alerts;
+using MinecraftFirewall.Proxy.Anomaly;
 using MinecraftFirewall.Proxy.Defense;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity;
@@ -51,11 +52,14 @@ public sealed class PolicyEngine(
     IAlertSender alerts,
     ThreatIntelligence threatIntelligence,
     ScannerDetector scannerDetector,
+    BotDetector botDetector,
+    AnomalyResponder anomalyResponder,
     IOptions<FirewallBanOptions> banOptions,
     IOptions<IpInfoOptions> ipInfoOptions,
     IOptions<DdosOptions> ddosOptions,
     IOptions<BotDefenseOptions> botOptions,
     IOptions<IdentityOptions> identityOptions,
+    IOptions<AnomalyOptions> anomalyOptions,
     ILogger<PolicyEngine> logger)
 {
     private readonly FirewallBanOptions _banOptions = banOptions.Value;
@@ -63,6 +67,7 @@ public sealed class PolicyEngine(
     private readonly DdosOptions _ddosOptions = ddosOptions.Value;
     private readonly BotDefenseOptions _botOptions = botOptions.Value;
     private readonly IdentityOptions _identityOptions = identityOptions.Value;
+    private readonly AnomalyOptions _anomalyOptions = anomalyOptions.Value;
 
     /// <summary>Checked once per connection, right after the Handshake is parsed, before the
     /// status/login branch — see HostnameMatcher for the matching rules and its important caveat
@@ -133,6 +138,20 @@ public sealed class PolicyEngine(
         }
 
         var entry = profile.IdentityStore.Find(username);
+
+        // A flagged address is asked to prove itself again even though it has connected before. Cheap
+        // for a returning player — one password — and expensive for anyone who does not have it. The
+        // requirement is consumed as it is read, so this costs one connection rather than putting the
+        // address into a state somebody has to be rescued from.
+        bool mustReauthenticate = anomalyResponder.ConsumeReauthenticationRequirement(remoteAddress, DateTimeOffset.UtcNow);
+        if (mustReauthenticate && entry?.PasswordHash is not null)
+        {
+            logger.LogInformation("[{Profile}] '{Username}' ({Ip}) must authenticate again — this address was flagged by the anomaly model.",
+                profile.Name, username, remoteAddress);
+            return new PolicyDecision(true, "Anomaly model asked this address to re-authenticate.",
+                new GraceAuthRequirement(entry, entry.PasswordHash));
+        }
+
         var identityDecision = IdentityGate.Evaluate(entry, remoteAddress, _identityOptions.RequireRegistrationForEveryone);
 
         if (identityDecision.Outcome == IdentityOutcome.Deny)
@@ -362,6 +381,61 @@ public sealed class PolicyEngine(
         alerts.Send(AlertKind.DangerousCommand,
             $"🧬 **Blocked packet** on `{AlertText.Field(profileName)}`\n" +
             $"`{AlertText.Field(username)}` from `{AlertText.Field(remoteAddress.ToString())}` — {AlertText.Field(detail)}");
+    }
+
+    /// <summary>
+    /// Carries out whatever the anomaly responder decided.
+    ///
+    /// Every branch here acts on the *next* connection from the address rather than the one that was
+    /// just scored, and that is inherent rather than a shortcut: the model judges a whole session, so
+    /// by the time it has an opinion the session is over. What that buys is a system whose response is
+    /// proportionate by construction — the worst it can do to somebody mid-game is nothing.
+    /// </summary>
+    public void ApplyAnomalyAction(IPAddress remoteAddress, string profileName, string username,
+        AnomalyVerdict verdict, AnomalyAction action)
+    {
+        AnomalyResponder responder = anomalyResponder;
+
+        string summary = $"anomaly score {verdict.Score:0.00} — {verdict.Description}";
+
+        switch (action)
+        {
+            case AnomalyAction.Report:
+                logger.LogWarning("[{Profile}] '{Username}' ({Ip}) does not resemble this server's usual traffic " +
+                                  "({Summary}). Reported only — nothing was refused.",
+                    profileName, username, remoteAddress, summary);
+                return;
+
+            case AnomalyAction.Score:
+                botDetector.RecordAnomaly(remoteAddress, _anomalyOptions.ScoreWeight);
+                logger.LogWarning("[{Profile}] '{Username}' ({Ip}) flagged repeatedly by the anomaly model ({Summary}). " +
+                                  "It now counts towards this address's bot score.",
+                    profileName, username, remoteAddress, summary);
+                return;
+
+            case AnomalyAction.RequireReauthentication:
+                responder.RequireReauthentication(remoteAddress, DateTimeOffset.UtcNow);
+                logger.LogWarning("[{Profile}] '{Username}' ({Ip}) flagged repeatedly by the anomaly model ({Summary}). " +
+                                  "The next connection from this address must authenticate again.",
+                    profileName, username, remoteAddress, summary);
+                break;
+
+            case AnomalyAction.Throttle:
+                responder.Throttle(remoteAddress, DateTimeOffset.UtcNow);
+                logger.LogWarning("[{Profile}] '{Username}' ({Ip}) flagged repeatedly by the anomaly model ({Summary}). " +
+                                  "Connection limits for this address are tightened for {Duration}.",
+                    profileName, username, remoteAddress, summary, _anomalyOptions.ActionDuration);
+                break;
+
+            case AnomalyAction.Ban:
+                banService.Ban(remoteAddress, $"[{profileName}] repeatedly flagged by the anomaly model: {summary}",
+                    _anomalyOptions.ActionDuration);
+                break;
+        }
+
+        alerts.Send(AlertKind.Ban,
+            $"🧠 **Anomaly action: {action}** on `{AlertText.Field(profileName)}`\n" +
+            $"`{AlertText.Field(username)}` from `{AlertText.Field(remoteAddress.ToString())}` — {AlertText.Field(summary)}");
     }
 
     private void RegisterStrikeAndMaybeBan(IPAddress address, string reason, int weight = 1)

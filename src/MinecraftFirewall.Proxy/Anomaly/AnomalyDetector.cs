@@ -41,8 +41,14 @@ public sealed class AnomalyDetector : IDisposable
     {
         _options = options.Value;
         _logger = logger;
+        Responder = new AnomalyResponder(_options, logger);
         _retrainTimer = new Timer(_ => Retrain(), null, _options.RetrainInterval, _options.RetrainInterval);
     }
+
+    /// <summary>Decides what a repeated anomaly should cause. Separate from the scoring because
+    /// "does this session resemble the others" and "should something happen to this player" are
+    /// different questions, and only the second one can be unfair.</summary>
+    public AnomalyResponder Responder { get; }
 
     public bool Enabled => _options.Enabled;
 
@@ -132,6 +138,8 @@ public sealed class AnomalyDetector : IDisposable
 
             Volatile.Write(ref _cutoff, baselineScores[index]);
             _forest = forest;
+            Responder.NoteModelReady(DateTimeOffset.UtcNow);
+            Responder.Prune(DateTimeOffset.UtcNow);
 
             if (first)
             {

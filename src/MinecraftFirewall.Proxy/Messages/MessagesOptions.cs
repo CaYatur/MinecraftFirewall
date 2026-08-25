@@ -13,10 +13,16 @@ public sealed class MessagesOptions
     /// <summary>Sent on a generic policy denial (rate limit, protected-username mismatch, VPN block, ban).</summary>
     public string GenericDenied { get; set; } = "This connection was blocked by MinecraftFirewall.";
 
-    /// <summary>Sent when a registered username's protocol version has no verified Play-state packet
-    /// table, so the grace-authentication check that username requires can't be safely performed.</summary>
+    /// <summary>
+    /// Only ever shown to a connection using a *protected* username — one locked to a Microsoft
+    /// account, or registered with a password and arriving from a new address — on a client version
+    /// this build has no verified packet table for. Ordinary players on any version are unaffected and
+    /// never see it, which the wording says so nobody concludes the server is version-locked.
+    /// </summary>
     public string UnsupportedClientVersion { get; set; } =
-        "This client version is not supported by the server's protection layer. Contact the server administrator.";
+        "This username is protected, and protecting it needs a client version this server's firewall knows. " +
+        "Yours is not one of them yet. Other players are unaffected — ask the administrator to update MinecraftFirewall, " +
+        "or join with a supported version.";
 
     /// <summary>Sent when AllowedHostnames is configured for the profile and the connection's
     /// Handshake Server Address doesn't match any entry.</summary>

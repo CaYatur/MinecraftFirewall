@@ -168,21 +168,7 @@ public class PolicyEngineAlertTests
             alerts,
             NullLogger<FirewallBanService>.Instance);
 
-        return new PolicyEngine(
-            new VpnIntelligence(),
-            new ConnectionRateLimiter(Options.Create(new RateLimitOptions())),
-            banService,
-            new StrikeTracker(),
-            new FakeIpInfoClient(),
-            alerts,
-            DefenseTestFactory.CreateThreatIntelligence(),
-            DefenseTestFactory.CreateScannerDetector(),
-            banOptions,
-            Options.Create(new IpInfoOptions()),
-            Options.Create(new DdosOptions()),
-            Options.Create(new BotDefenseOptions()),
-            Options.Create(new IdentityOptions()),
-            NullLogger<PolicyEngine>.Instance);
+        return DefenseTestFactory.CreatePolicyEngine(banService, alerts, banOptions: new FirewallBanOptions { StrikesBeforeBan = strikesBeforeBan });
     }
 
     private static string SingleMessageOfKind(RecordingAlertSender alerts, AlertKind kind) =>

@@ -207,13 +207,35 @@ public static class ClientConnection
 
         if (decision.GraceAuth is not null && !hasPacketIds)
         {
-            // Can't safely fulfil "must /login as the first message" without decoding Play-state chat
-            // packets for this protocol version — fail closed rather than let an unverified guess
-            // stand in for a security check on a registered username.
-            logger.LogWarning("[{Profile}] '{Username}' requires grace-authentication but protocol version {Version} has no verified packet table — denying.",
-                profile.Name, username, handshake.ProtocolVersion);
-            await TrySendDisconnectAsync(client, clientStream, messages.UnsupportedClientVersion, hostShutdown).ConfigureAwait(false);
-            return;
+            // Two very different situations reach this line, and treating them the same was wrong.
+            //
+            // A *specific* account is being protected — someone registered this name with a password,
+            // and the connection is from an address that name has never used. Enforcing that needs the
+            // Play-state chat packet IDs for this client's protocol version, and guessing them would
+            // mean an unverified guess standing in for a security check on somebody's account. Fails
+            // closed, as it always has.
+            //
+            // Server-wide registration applied to a name nobody has claimed is not that. It is a
+            // blanket policy, no particular identity is at stake, and refusing every player whose
+            // client is a point release away from one this build knows would make the whole feature
+            // unusable — which is exactly what it did. Those connections go through, and the log says
+            // plainly what could not be enforced and how to fix it.
+            if (decision.GraceAuth.NeedsRegistration)
+            {
+                logger.LogWarning(
+                    "[{Profile}] '{Username}' joined on protocol version {Version}, which this build has no verified " +
+                    "packet table for — registration could NOT be enforced for this connection and they were let in. " +
+                    "Supported versions: {Supported}. Update MinecraftFirewall to cover newer clients.",
+                    profile.Name, username, handshake.ProtocolVersion, ProtocolVersionRegistry.SupportedVersionsDescription);
+            }
+            else
+            {
+                logger.LogWarning("[{Profile}] '{Username}' is a registered name connecting from a new address, but protocol " +
+                                  "version {Version} has no verified packet table — denying rather than skipping the password check.",
+                    profile.Name, username, handshake.ProtocolVersion);
+                await TrySendDisconnectAsync(client, clientStream, messages.UnsupportedClientVersion, hostShutdown).ConfigureAwait(false);
+                return;
+            }
         }
 
         // Everything below reads and writes the client through `clientIo`, which for a verified
@@ -293,7 +315,7 @@ public static class ClientConnection
                 // After the session, not during it. What the model learns from is the shape of a whole
                 // conversation — how long it lasted, how it was paced, what mix of packets it carried —
                 // and none of that exists until the connection is over.
-                ScoreFinishedSession(inspector, anomalyDetector, profile, username, remoteAddress, logger);
+                ScoreFinishedSession(inspector, anomalyDetector, policyEngine, profile, username, remoteAddress, logger);
             }
             else
             {
@@ -310,16 +332,16 @@ public static class ClientConnection
     }
 
     /// <summary>
-    /// Feeds a finished connection to the anomaly baseline and reports it if it does not fit.
+    /// Feeds a finished connection to the anomaly baseline and hands any finding to the responder.
     ///
-    /// Reports only. What the model detects is "unlike the other connections to this server", which is
-    /// a weaker claim than "malicious" and cannot be strengthened into one from here — a server whose
-    /// players are all in one timezone will score an unusual-hours visitor as anomalous, correctly and
-    /// unhelpfully. Only a person can supply the missing judgement, so the finding goes where a person
-    /// will read it.
+    /// What the model detects is "unlike the other connections to this server", which is a weaker
+    /// claim than "malicious" and never becomes it — a server whose players are all in one timezone
+    /// will flag an unusual-hours visitor, correctly and unhelpfully. What the responder adds is the
+    /// judgement the model cannot make: how often it has happened, how settled the baseline is, and
+    /// how far the admin has said they are willing to go.
     /// </summary>
     private static void ScoreFinishedSession(PlayStateInspector inspector, AnomalyDetector anomalyDetector,
-        ServerProfile profile, string username, IPAddress remoteAddress, ILogger logger)
+        PolicyEngine policyEngine, ServerProfile profile, string username, IPAddress remoteAddress, ILogger logger)
     {
         if (!anomalyDetector.Enabled)
             return;
@@ -335,9 +357,8 @@ public static class ClientConnection
 
             if (verdict is { Unusual: true } unusual)
             {
-                logger.LogWarning("[{Profile}] '{Username}' ({Ip}) does not resemble this server's usual traffic " +
-                                  "(anomaly score {Score:0.00}): {Detail}. Reported only — nothing was refused.",
-                    profile.Name, username, remoteAddress, unusual.Score, unusual.Description);
+                AnomalyAction action = anomalyDetector.Responder.Decide(remoteAddress, unusual.Score, DateTimeOffset.UtcNow);
+                policyEngine.ApplyAnomalyAction(remoteAddress, profile.Name, username, unusual, action);
             }
         }
         catch (Exception ex)

@@ -359,6 +359,15 @@
                                 <TextBlock Style="{StaticResource H2}" Text="{loc:T DefAnomalyTitle}"/>
                                 <TextBlock Style="{StaticResource Muted}" Text="{loc:T DefAnomalyBlurb}"/>
                                 <CheckBox x:Name="ChkAnomaly" Margin="0,13,0,0" Content="{loc:T ChkAnomaly}" Click="DefenseToggle_Changed" Tag="AnomalyDetection/Enabled"/>
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T AnomalyActionLabel}" Margin="0,14,0,0"/>
+                                <ComboBox x:Name="AnomalyActionBox" SelectionChanged="AnomalyAction_Changed"
+                                          HorizontalAlignment="Left" MinWidth="420" Margin="0,6,0,0">
+                                    <ComboBoxItem Content="{loc:T AnomalyActionReport}"   Tag="Report"/>
+                                    <ComboBoxItem Content="{loc:T AnomalyActionScore}"    Tag="Score"/>
+                                    <ComboBoxItem Content="{loc:T AnomalyActionReauth}"   Tag="RequireReauthentication"/>
+                                    <ComboBoxItem Content="{loc:T AnomalyActionThrottle}" Tag="Throttle"/>
+                                    <ComboBoxItem Content="{loc:T AnomalyActionBan}"      Tag="Ban"/>
+                                </ComboBox>
                                 <Border Background="#12141A" BorderBrush="#242833" BorderThickness="1" CornerRadius="3" Padding="11,9" Margin="0,12,0,0">
                                     <TextBlock Style="{StaticResource Muted}" Text="{loc:T AnomalyNote}"/>
                                 </Border>

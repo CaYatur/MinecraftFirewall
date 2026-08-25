@@ -69,6 +69,18 @@ public sealed class BotDetector : IDisposable
     public void RecordHostnameMismatch(IPAddress address) =>
         History(address).HostnameMismatches++;
 
+    /// <summary>
+    /// Records that the anomaly model has repeatedly flagged this address, so it counts towards the
+    /// bot score on later connections.
+    ///
+    /// This is the mildest way for a statistical judgement to have any effect at all, and the one most
+    /// likely to be right: "unlike the other connections" is weak evidence on its own, but combined
+    /// with a metronomic reconnect pattern or a run of usernames it is a much stronger claim than
+    /// either part. It never refuses anyone by itself — the weight is deliberately below the threshold.
+    /// </summary>
+    public void RecordAnomaly(IPAddress address, int weight) =>
+        History(address).AnomalyWeight = weight;
+
     public BotAssessment Assess(IPAddress address, string username, int protocolVersion, bool protocolKnown, DateTimeOffset now)
     {
         if (!_options.Enabled || IPAddress.IsLoopback(address))
@@ -116,6 +128,12 @@ public sealed class BotDetector : IDisposable
         {
             signals.Add(new BotSignal("on-threat-list", _threatIntelligence.ScoreWeight,
                 "this address appears on an imported public threat list"));
+        }
+
+        if (history.AnomalyWeight > 0)
+        {
+            signals.Add(new BotSignal("anomalous-sessions", history.AnomalyWeight,
+                "earlier sessions from this address did not resemble this server's usual traffic"));
         }
 
         if (history.AbandonedHandshakes >= 3)
@@ -180,6 +198,7 @@ public sealed class BotDetector : IDisposable
         public DateTimeOffset? LastStatusPing { get; set; }
         public int AbandonedHandshakes { get; set; }
         public int HostnameMismatches { get; set; }
+        public int AnomalyWeight { get; set; }
         public DateTimeOffset LastActivity { get; private set; } = DateTimeOffset.UtcNow;
 
         public void RecordConnection(DateTimeOffset now)

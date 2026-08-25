@@ -67,11 +67,7 @@ public class DeepInspectionPipelineTests
         var banService = new FirewallBanService(banOptions, new NeverBanList(Options.Create(new NeverBanOptions())),
             gateway, alerts, NullLogger<FirewallBanService>.Instance);
 
-        var policy = new PolicyEngine(new VpnIntelligence(), new ConnectionRateLimiter(Options.Create(new RateLimitOptions())),
-            banService, new StrikeTracker(), new FakeIpInfoClient(), alerts, DefenseTestFactory.CreateThreatIntelligence(), DefenseTestFactory.CreateScannerDetector(),
-            banOptions, Options.Create(new IpInfoOptions()), Options.Create(new DdosOptions()),
-            Options.Create(new BotDefenseOptions()), Options.Create(new IdentityOptions()),
-            NullLogger<PolicyEngine>.Instance);
+        var policy = DefenseTestFactory.CreatePolicyEngine(banService, alerts, banOptions: new FirewallBanOptions { StrikesBeforeBan = strikesBeforeBan });
 
         var options = new InspectionOptions();
         tweak?.Invoke(options);

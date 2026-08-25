@@ -34,11 +34,7 @@ public class PolicyEngineTests
         var strikeTracker = new StrikeTracker();
         var ipInfo = new FakeIpInfoClient();
 
-        var engine = new PolicyEngine(vpnIntel, rateLimiter, banService, strikeTracker, ipInfo, alerts,
-            DefenseTestFactory.CreateThreatIntelligence(), DefenseTestFactory.CreateScannerDetector(), banOptions,
-            Options.Create(ipInfoOptions ?? new IpInfoOptions()), Options.Create(new DdosOptions()),
-            Options.Create(new BotDefenseOptions()), Options.Create(new IdentityOptions()),
-            NullLogger<PolicyEngine>.Instance);
+        var engine = DefenseTestFactory.CreatePolicyEngine(banService, alerts, rateLimiter, vpnIntel, ipInfo, strikeTracker, new FirewallBanOptions { StrikesBeforeBan = strikesBeforeBan }, ipInfoOptions ?? new IpInfoOptions());
         return new Fixture(engine, vpnIntel, gateway, banService, ipInfo, alerts);
     }
 

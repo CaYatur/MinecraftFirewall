@@ -102,11 +102,7 @@ public class RegistrationGateTests
         var banService = new FirewallBanService(banOptions, new NeverBanList(Options.Create(new NeverBanOptions())),
             new FakeWindowsFirewallGateway(), new RecordingAlertSender(), NullLogger<FirewallBanService>.Instance);
 
-        var policy = new PolicyEngine(new VpnIntelligence(), new ConnectionRateLimiter(Options.Create(new RateLimitOptions())),
-            banService, new StrikeTracker(), new FakeIpInfoClient(), new RecordingAlertSender(),
-            DefenseTestFactory.CreateThreatIntelligence(), DefenseTestFactory.CreateScannerDetector(),
-            banOptions, Options.Create(new IpInfoOptions()), Options.Create(new DdosOptions()),
-            Options.Create(new BotDefenseOptions()), Options.Create(new IdentityOptions()), NullLogger<PolicyEngine>.Instance);
+        var policy = DefenseTestFactory.CreatePolicyEngine(banService, banOptions: new FirewallBanOptions { StrikesBeforeBan = 100 });
 
         var inspector = new PlayStateInspector(profile, "Steve", Player, Ids, grace, startsTrusted: false,
             identity ?? new IdentityOptions { PasswordMinLength = 6 }, [], new MessagesOptions(), policy,

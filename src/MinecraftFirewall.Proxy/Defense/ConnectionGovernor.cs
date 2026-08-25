@@ -78,6 +78,15 @@ public sealed class ConnectionGovernor : IDisposable
     private long _defensiveUntilTicks;
     private long _refusals;
 
+    /// <summary>
+    /// Asked, per address, whether that address is currently under a tightened allowance.
+    ///
+    /// A delegate rather than a reference to the anomaly detector, because the governor runs on the
+    /// accept path and has no business knowing what a model is. Anything that can answer "should this
+    /// address get less room" can supply it.
+    /// </summary>
+    public Func<IPAddress, bool>? IsAddressThrottled { get; set; }
+
     public ConnectionGovernor(IOptions<DdosOptions> options, ILogger<ConnectionGovernor> logger)
     {
         _options = options.Value;
@@ -117,7 +126,9 @@ public sealed class ConnectionGovernor : IDisposable
         if (accepts > _options.AcceptsPerSecondBeforeDefensiveMode)
             EnterDefensiveMode(accepts, now);
 
-        bool defensive = DefensiveMode;
+        // Either a server-wide flood or an individual address that has been flagged tightens the
+        // same limits, so they share one path — an address under both is not punished twice.
+        bool defensive = DefensiveMode || IsAddressThrottled?.Invoke(address) == true;
         int maxPerIp = Tighten(_options.MaxConcurrentPerIp, defensive);
         int maxPerSubnet = Tighten(_options.MaxConcurrentPerSubnet, defensive);
         int maxIpRate = Tighten(_options.MaxNewConnectionsPerIpPerMinute, defensive);
