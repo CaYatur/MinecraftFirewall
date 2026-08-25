@@ -177,6 +177,18 @@ public static class ClientConnection
 
                 clientIo = cipherStream;
             }
+            else if (premiumHandshake.AutoClaimEnabled && hasPacketIds)
+            {
+                // Opportunistic: nobody declared this name premium, so nothing is being enforced here.
+                // If a genuine account answers, the name is claimed for them permanently; if anything
+                // at all goes wrong the connection simply carries on as an ordinary offline login and
+                // no record is made either way. See PremiumOptions.AutoClaimOnVerifiedLogin.
+                cipherStream = await TryAutoClaimAsync(clientStream, profile, remoteAddress, username, premiumHandshake, logger, hostShutdown)
+                    .ConfigureAwait(false);
+
+                if (cipherStream is not null)
+                    clientIo = cipherStream;
+            }
 
             var (backendClient, backendStream) = await TryConnectBackendAsync(profile, logger, hostShutdown).ConfigureAwait(false);
             if (backendClient is null || backendStream is null)
@@ -207,6 +219,44 @@ public static class ClientConnection
             // leaveInnerOpen: true, so this releases the cipher state only — the socket's lifetime
             // still belongs to the caller's `using` on the TcpClient.
             cipherStream?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Offers an undeclared username the chance to prove it belongs to a genuine Mojang account, and
+    /// claims it permanently if so.
+    ///
+    /// Returns the cipher-wrapped stream when the crypto handshake completed — which happens whether
+    /// or not Mojang confirmed the session, because by then the client has switched its own cipher on
+    /// and every later byte must go through it. Returns null only when the handshake never produced a
+    /// shared key, in which case the caller keeps using the plaintext stream. A failed claim is never
+    /// a denial: the player continues as an ordinary offline login.
+    /// </summary>
+    private static async Task<AesCfb8Stream?> TryAutoClaimAsync(
+        NetworkStream clientStream, ServerProfile profile, IPAddress remoteAddress, string username,
+        PremiumLoginHandshake premiumHandshake, ILogger logger, CancellationToken hostShutdown)
+    {
+        try
+        {
+            IdentityEntry entry = profile.IdentityStore.GetOrCreate(username);
+            PremiumLoginOutcome outcome = await premiumHandshake
+                .TryAutoClaimAsync(clientStream, entry, username, hostShutdown)
+                .ConfigureAwait(false);
+
+            if (outcome.Success)
+                logger.LogInformation("[{Profile}] '{Username}' auto-claimed by a verified account from {Ip}.", profile.Name, username, remoteAddress);
+            else
+                logger.LogDebug("[{Profile}] '{Username}' did not verify ({Reason}) — continuing as a normal offline login, nothing recorded.",
+                    profile.Name, username, outcome.FailureReason);
+
+            return outcome.SharedSecret is not null
+                ? new AesCfb8Stream(clientStream, outcome.SharedSecret, leaveInnerOpen: true)
+                : null;
+        }
+        catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException)
+        {
+            logger.LogDebug("[{Profile}] '{Username}' dropped during the optional premium challenge: {Message}", profile.Name, username, ex.Message);
+            return null;
         }
     }
 

@@ -41,6 +41,34 @@ public sealed class PremiumLoginHandshake(
 
     public bool Enabled => _options.Enabled;
 
+    /// <summary>See <see cref="PremiumOptions.AutoClaimOnVerifiedLogin"/> — off unless the operator
+    /// switched it on, because it changes the login handshake for every player on the server.</summary>
+    public bool AutoClaimEnabled => _options.Enabled && _options.AutoClaimOnVerifiedLogin;
+
+    /// <summary>
+    /// The opportunistic half of auto-claim: challenge a username nobody has declared, and claim it
+    /// permanently only if a genuine Mojang account answers.
+    ///
+    /// Every failure path returns false and records NOTHING — no "this name is offline-only" marker
+    /// exists anywhere, by design. The caller then continues the connection as an ordinary offline
+    /// login, so a cracked client is unaffected beyond having completed a crypto handshake, and the
+    /// name stays claimable by its real owner forever.
+    /// </summary>
+    public async Task<PremiumLoginOutcome> TryAutoClaimAsync(Stream clientStream, IdentityEntry entry, string username, CancellationToken ct)
+    {
+        PremiumLoginOutcome outcome = await RunAsync(clientStream, entry, username, ct).ConfigureAwait(false);
+
+        if (outcome.Success)
+        {
+            entry.PremiumRequired = true;
+            logger.LogWarning(
+                "'{Username}' proved ownership of a genuine Minecraft account and has been permanently claimed. Only that account can use this name from now on.",
+                username);
+        }
+
+        return outcome;
+    }
+
     public async Task<PremiumLoginOutcome> RunAsync(Stream clientStream, IdentityEntry entry, string username, CancellationToken ct)
     {
         byte[] verifyToken = EncryptionRequestPacket.GenerateVerifyToken();
