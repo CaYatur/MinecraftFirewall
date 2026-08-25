@@ -22,6 +22,12 @@ public enum BanResult
 /// </summary>
 public sealed class FirewallBanService : IDisposable
 {
+    /// <summary>How many times each address has been banned, and when it last was. Bounded by pruning
+    /// alongside the expiry sweep — an attacker must not be able to grow this by attacking.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<IPAddress, OffenceRecord> _offences = new();
+
+    private sealed record OffenceRecord(int Count, DateTimeOffset LastBannedAt);
+
     private static readonly TimeSpan NeverBanWarningInterval = TimeSpan.FromMinutes(1);
 
     private readonly System.Collections.Concurrent.ConcurrentDictionary<IPAddress, DateTimeOffset> _lastNeverBanWarning = new();
@@ -145,7 +151,11 @@ public sealed class FirewallBanService : IDisposable
             return BanResult.RefusedNeverBan;
         }
 
-        var ttl = duration ?? _options.DefaultBanDuration;
+        // Recorded whether or not the duration was chosen by the caller: a crawler banned explicitly and
+        // then later banned again for something else should carry that history. Only the *duration* is
+        // left alone when a caller specified one, since that was already a deliberate judgement.
+        int offence = RecordOffence(address, DateTimeOffset.UtcNow);
+        var ttl = duration ?? EscalatedDuration(offence);
         var expiresAt = DateTimeOffset.UtcNow + ttl;
         bool alreadyBanned = _activeBans.ContainsKey(address);
 
@@ -175,12 +185,22 @@ public sealed class FirewallBanService : IDisposable
             return BanResult.AlreadyBanned;
         }
 
-        _logger.LogWarning("Banned {Ip} until {ExpiresAt}. Reason: {Reason}", address, expiresAt, reason);
+        _logger.LogWarning("Banned {Ip} until {ExpiresAt} ({Ttl}, offence {Offence}). Reason: {Reason}",
+            address, expiresAt, Describe(ttl), offence, reason);
         _alerts.Send(AlertKind.Ban, $"🚫 **Banned `{AlertText.Field(address.ToString())}`** until `{expiresAt:u}`\n{AlertText.Field(reason)}");
         return BanResult.Banned;
     }
 
-    public void Unban(IPAddress address)
+    /// <summary>
+    /// Lifts a ban.
+    ///
+    /// <paramref name="forgetHistory"/> separates the two callers, which want opposite things. An
+    /// admin unbanning by hand is saying the ban was wrong, so the offence count goes with it —
+    /// otherwise the next ban would start halfway up the escalation curve for something that should
+    /// never have counted. A ban expiring on its own is saying nothing of the kind: remembering that
+    /// it happened is the entire point of escalation.
+    /// </summary>
+    public void Unban(IPAddress address, bool forgetHistory = true)
     {
         try
         {
@@ -191,9 +211,52 @@ public sealed class FirewallBanService : IDisposable
             _logger.LogError(ex, "Failed to remove the Windows Firewall rule blocking {Ip}.", address);
         }
 
+        if (forgetHistory)
+            _offences.TryRemove(address, out _);
+
         if (_activeBans.TryRemove(address, out _))
             _logger.LogInformation("Unbanned {Ip}.", address);
     }
+
+    /// <summary>
+    /// Records this ban against the address and returns which offence it is, counting only those
+    /// inside the memory window.
+    ///
+    /// Held in memory, which means a service restart forgives everyone. That is a real limitation and
+    /// a deliberate trade: the alternative is another file on disk holding a list of addresses and
+    /// their sentences, and the escalation is a deterrent rather than a security boundary — nothing
+    /// depends on it surviving. A server that restarts often enough for this to matter has a different
+    /// problem.
+    /// </summary>
+    private int RecordOffence(IPAddress address, DateTimeOffset now)
+    {
+        return _offences.AddOrUpdate(
+            address,
+            _ => new OffenceRecord(1, now),
+            (_, previous) => now - previous.LastBannedAt > _options.RepeatOffenceMemory
+                ? new OffenceRecord(1, now)
+                : new OffenceRecord(previous.Count + 1, now)).Count;
+    }
+
+    /// <summary>Doubles per offence, capped. The first ban is exactly the configured default, so a
+    /// server that never sees a repeat offender behaves as if this feature did not exist.</summary>
+    private TimeSpan EscalatedDuration(int offence)
+    {
+        if (!_options.EscalateRepeatOffenders || offence <= 1)
+            return _options.DefaultBanDuration;
+
+        // Shifted rather than raised to a power, and clamped first: 2^63 ticks overflows long before
+        // an address could realistically get there, and an overflowed TimeSpan is a negative one.
+        int doublings = Math.Min(offence - 1, 20);
+        double ticks = _options.DefaultBanDuration.Ticks * Math.Pow(2, doublings);
+
+        return ticks >= _options.MaxBanDuration.Ticks
+            ? _options.MaxBanDuration
+            : TimeSpan.FromTicks((long)ticks);
+    }
+
+    private static string Describe(TimeSpan span) =>
+        span.TotalDays >= 1 ? $"{span.TotalDays:0.#} days" : $"{span.TotalHours:0.#} hours";
 
     public IReadOnlyCollection<(IPAddress Address, DateTimeOffset ExpiresAt)> ListActiveBans() =>
         _activeBans.Select(kv => (kv.Key, kv.Value)).ToArray();
@@ -208,7 +271,14 @@ public sealed class FirewallBanService : IDisposable
         foreach (var (address, expiresAt) in _activeBans.ToArray())
         {
             if (expiresAt <= now)
-                Unban(address);
+                Unban(address, forgetHistory: false);
+        }
+
+        // Offence history outlives the ban it caused — that is what escalation is — but not forever.
+        foreach (var (address, record) in _offences.ToArray())
+        {
+            if (now - record.LastBannedAt > _options.RepeatOffenceMemory)
+                _offences.TryRemove(address, out _);
         }
     }
 

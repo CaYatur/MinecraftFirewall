@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-467%20passing-4ade80?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-476%20passing-4ade80?style=flat-square">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078d4?style=flat-square">
   <img alt=".NET" src="https://img.shields.io/badge/.NET-10-512bd4?style=flat-square">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
@@ -295,7 +295,7 @@ nothing at all.
 | 📋 **Protected usernames** | Pin a name to specific IPs or CIDR ranges. Unknown IP is a hard refusal. |
 | 🌐 **VPN & datacenter blocking** | Free MIT-licensed IP lists, refreshed daily, cached to disk. Optional real-time ipinfo.io lookup on top. |
 | 🚪 **Allowed domains** | Only accept players arriving through your domain — IP-scanning bots get nothing. |
-| ⛔ **Real firewall bans** | Repeat offenders get a genuine machine-wide Windows Firewall rule, with an expiry that survives restarts. |
+| ⛔ **Real firewall bans** | Repeat offenders get a genuine machine-wide Windows Firewall rule, and each ban lasts twice as long as the last — 6 hours, 12, a day, two days — so persistence costs more every time. |
 | 🕵️ **Command auditing** | Play-state commands are logged and checked against a dangerous-command list. |
 | 🚦 **Rate limiting** | Separate sliding windows for server-list pings and login attempts. |
 | 💬 **Discord alerts** | Optional webhook for bans, new trusted IPs, and failed premium checks. |
@@ -459,7 +459,7 @@ src/MinecraftFirewall.Proxy/    The service itself
 src/MinecraftFirewall.App/      The control panel (WPF)
 src/MinecraftFirewall.Admin/    Companion CLI
 installer/                      Inno Setup script + build.ps1 that produces the setup .exe
-tests/MinecraftFirewall.Tests/  467 tests — no real server, no admin rights, no real firewall touched
+tests/MinecraftFirewall.Tests/  476 tests — no real server, no admin rights, no real firewall touched
 tools/                          Diagnostic client used to verify wire behaviour against a real server
 docs/plan.md                    Full design doc: every decision, and how each was verified
 ```
