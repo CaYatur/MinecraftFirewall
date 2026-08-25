@@ -28,11 +28,25 @@ public sealed class PlayStateInspector(
     MessagesOptions messages,
     PolicyEngine policyEngine,
     InspectionOptions inspection,
-    ILogger logger)
+    ILogger logger,
+    Func<DateTimeOffset>? clock = null)
 {
+    /// <summary>
+    /// Where "now" comes from. Overridable because every rate and speed judgement here is a division
+    /// by elapsed time, and a test feeding packets from a MemoryStream delivers them all in the same
+    /// instant — so against the wall clock the interesting paths are skipped by the very guards that
+    /// stop a lag spike being read as a speed measurement, and the tests pass without ever reaching
+    /// the code they claim to cover.
+    /// </summary>
+    private readonly Func<DateTimeOffset> _now = clock ?? (static () => DateTimeOffset.UtcNow);
+
+    /// <summary>Ceiling for one sign line or book page. Vanilla allows far less, but the point here
+    /// is to bound the scan rather than to police length — the packet size cap does that.</summary>
+    private const int MaxWrittenTextLength = 8192;
+
     private readonly PacketBudget _budget = new(inspection.MaxPacketsPerSecond, inspection.MaxBytesPerSecond);
     private readonly MovementAnalyzer _movement = new(inspection);
-    private readonly SecondCounter _attacks = new();
+    private readonly SecondCounter _attacks = new(clock?.Invoke() ?? DateTimeOffset.UtcNow);
 
     private bool _awaitingLoginAcknowledged = true;
     private bool _inPlayState;
@@ -40,6 +54,24 @@ public sealed class PlayStateInspector(
     private bool _isTrusted = startsTrusted;
     private bool _reportedLayoutProblem;
     private bool _reportedAttackRate;
+
+    public PlayStateInspector(
+        ServerProfile profile,
+        string username,
+        IPAddress remoteAddress,
+        PlayStatePacketIds packetIds,
+        GraceAuthRequirement? graceAuth,
+        bool startsTrusted,
+        IdentityOptions identityOptions,
+        IReadOnlyCollection<string> dangerousCommands,
+        MessagesOptions messages,
+        PolicyEngine policyEngine,
+        InspectionOptions inspection,
+        ILogger logger)
+        : this(profile, username, remoteAddress, packetIds, graceAuth, startsTrusted, identityOptions,
+               dangerousCommands, messages, policyEngine, inspection, logger, null)
+    {
+    }
 
     /// <summary>Set when a dangerous command or a failed grace-authentication means this connection
     /// must be cut off — the caller (ClientConnection) checks this after the loop ends to decide
@@ -56,7 +88,7 @@ public sealed class PlayStateInspector(
 
             // Charged before anything is decided about the packet. A flood is defined by its volume,
             // not its contents, so the cheapest check has to be the first one.
-            if (inspection.Enabled && _budget.Charge(packet.RawFrame.Length, DateTimeOffset.UtcNow) is { } overBudget)
+            if (inspection.Enabled && _budget.Charge(packet.RawFrame.Length, _now()) is { } overBudget)
             {
                 logger.LogWarning("[{Profile}] '{Username}' ({Ip}) exceeded its packet budget: {Detail}",
                     profile.Name, username, remoteAddress, overBudget);
@@ -68,8 +100,9 @@ public sealed class PlayStateInspector(
             if (_inPlayState && inspection.Enabled && InspectPlayPacket(packet) is { } violation)
             {
                 logger.LogWarning("[{Profile}] blocked a packet from '{Username}' ({Ip}): {Violation}",
-                    profile.Name, username, remoteAddress, violation);
-                policyEngine.RegisterProtocolViolation(remoteAddress, profile.Name, username, violation);
+                    profile.Name, username, remoteAddress, violation.Detail);
+                policyEngine.RegisterProtocolViolation(remoteAddress, profile.Name, username, violation.Detail,
+                    unambiguous: violation.Severity == PayloadSeverity.ProtocolViolation);
                 DisconnectReason = messages.GenericDenied;
                 return;
             }
@@ -126,7 +159,9 @@ public sealed class PlayStateInspector(
                 logger.LogWarning("[{Profile}] blocked {Kind} from '{Username}' ({Ip}): {Rule} — {Detail}",
                     profile.Name, isCommand ? "a command" : "a chat message", username, remoteAddress,
                     finding.Rule, finding.Detail);
-                policyEngine.RegisterProtocolViolation(remoteAddress, profile.Name, username, $"{finding.Rule}: {finding.Detail}");
+                policyEngine.RegisterProtocolViolation(remoteAddress, profile.Name, username,
+                    $"{finding.Rule}: {finding.Detail}",
+                    unambiguous: finding.Severity == PayloadSeverity.ProtocolViolation);
                 DisconnectReason = messages.GenericDenied;
                 return;
             }
@@ -232,13 +267,16 @@ public sealed class PlayStateInspector(
     /// follows, and for the same reason — a wrong guess about a field offset is not a missed
     /// detection, it is a firewall that mangles ordinary play.
     /// </summary>
-    private string? InspectPlayPacket(DecodedPacket packet)
+    private PayloadFinding? InspectPlayPacket(DecodedPacket packet)
     {
         if (packetIds.IsMovement(packet.PacketId))
             return InspectMovement(packet);
 
         if (packet.PacketId == packetIds.PlayCustomPayloadServerbound)
             return InspectPluginMessage(packet);
+
+        if (packet.PacketId == packetIds.PlaySignUpdateServerbound || packet.PacketId == packetIds.PlayEditBookServerbound)
+            return InspectWrittenText(packet);
 
         if (packet.PacketId == packetIds.PlayInteractServerbound || packet.PacketId == packetIds.PlaySwingServerbound)
         {
@@ -249,7 +287,7 @@ public sealed class PlayStateInspector(
         return null;
     }
 
-    private string? InspectMovement(DecodedPacket packet)
+    private PayloadFinding? InspectMovement(DecodedPacket packet)
     {
         bool positional = packet.PacketId == packetIds.PlayMovePlayerPosServerbound ||
                           packet.PacketId == packetIds.PlayMovePlayerPosRotServerbound;
@@ -260,7 +298,7 @@ public sealed class PlayStateInspector(
             return null;
         }
 
-        MovementFinding finding = _movement.Inspect(packet.Fields, DateTimeOffset.UtcNow);
+        MovementFinding finding = _movement.Inspect(packet.Fields, _now());
 
         if (_movement.LayoutUnrecognised && !_reportedLayoutProblem)
         {
@@ -274,9 +312,11 @@ public sealed class PlayStateInspector(
         return finding.Severity switch
         {
             // Not a cheat and not a judgement call: no client produces these by playing.
-            MovementSeverity.Invalid => $"impossible movement — {finding.Detail}",
+            MovementSeverity.Invalid => new PayloadFinding("impossible-movement", finding.Detail, PayloadSeverity.ProtocolViolation),
 
-            MovementSeverity.Suspicious when inspection.KickOnMovementAnomaly => $"movement anomaly — {finding.Detail}",
+            // A heuristic, so even when the admin has asked for a kick it must not weigh towards a ban.
+            MovementSeverity.Suspicious when inspection.KickOnMovementAnomaly =>
+                new PayloadFinding("movement-anomaly", finding.Detail, PayloadSeverity.Assumption),
 
             MovementSeverity.Suspicious => ReportMovementAnomaly(finding),
 
@@ -287,18 +327,103 @@ public sealed class PlayStateInspector(
     /// <summary>Records a movement anomaly without acting on it — the default, because this proxy
     /// cannot see the ice, boat, elytra or plugin teleport that would explain it. See
     /// InspectionOptions.KickOnMovementAnomaly.</summary>
-    private string? ReportMovementAnomaly(MovementFinding finding)
+    private PayloadFinding? ReportMovementAnomaly(MovementFinding finding)
     {
         logger.LogInformation("[{Profile}] '{Username}' ({Ip}) {Detail}. Not acted on — see KickOnMovementAnomaly.",
             profile.Name, username, remoteAddress, finding.Detail);
         return null;
     }
 
-    private string? InspectPluginMessage(DecodedPacket packet)
+    /// <summary>
+    /// Scans the text a player writes on a sign or into a book.
+    ///
+    /// Both were live Log4Shell vectors alongside chat, for the same reason: the text ends up
+    /// somewhere that formats it. Books in particular are read back by plugins, shown in web maps and
+    /// written into world data, so a payload placed in one persists long after the connection that
+    /// delivered it has gone.
+    ///
+    /// Layouts are read defensively, exactly as movement is. If the fields do not decode cleanly the
+    /// packet is forwarded untouched rather than guessed at — this project's rule is that an
+    /// unverified field offset is never worth a wrong refusal.
+    /// </summary>
+    private PayloadFinding? InspectWrittenText(DecodedPacket packet)
+    {
+        List<string> texts;
+        try
+        {
+            texts = packet.PacketId == packetIds.PlaySignUpdateServerbound
+                ? ReadSignLines(packet.Fields)
+                : ReadBookPages(packet.Fields);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or ArgumentOutOfRangeException or IndexOutOfRangeException)
+        {
+            return null;
+        }
+
+        foreach (string text in texts)
+        {
+            // A generous length ceiling rather than the chat one: book pages legitimately run to
+            // hundreds of characters, and the frame-size cap already bounds the packet as a whole.
+            if (PayloadScanner.Scan(text, MaxWrittenTextLength) is { } finding)
+                return finding with { Rule = $"written-text/{finding.Rule}" };
+        }
+
+        return null;
+    }
+
+    /// <summary>Sign Update: a block position (8 bytes), a front/back flag (1 byte), then the four
+    /// lines.</summary>
+    private static List<string> ReadSignLines(ReadOnlySpan<byte> fields)
+    {
+        const int headerBytes = 8 + 1;
+        var lines = new List<string>(4);
+
+        ReadOnlySpan<byte> rest = fields[headerBytes..];
+        for (int i = 0; i < 4; i++)
+        {
+            lines.Add(MinecraftPrimitives.ReadString(rest, out int read));
+            rest = rest[read..];
+        }
+
+        return lines;
+    }
+
+    /// <summary>Edit Book: the hotbar slot, then a length-prefixed array of pages, then an optional
+    /// title.</summary>
+    private static List<string> ReadBookPages(ReadOnlySpan<byte> fields)
+    {
+        _ = VarInt.Decode(fields, out int slotLen);
+        ReadOnlySpan<byte> rest = fields[slotLen..];
+
+        int pageCount = VarInt.Decode(rest, out int countLen);
+        rest = rest[countLen..];
+
+        // Vanilla caps a book at 100 pages. A larger count is either a different layout or an attempt
+        // to make this loop the denial of service, and neither is worth continuing into.
+        if (pageCount is < 0 or > 100)
+            throw new InvalidDataException($"Implausible book page count {pageCount}.");
+
+        var pages = new List<string>(pageCount + 1);
+        for (int i = 0; i < pageCount; i++)
+        {
+            pages.Add(MinecraftPrimitives.ReadString(rest, out int read));
+            rest = rest[read..];
+        }
+
+        // The title is optional: one boolean, then the string if it is set.
+        if (rest.Length > 0 && rest[0] == 1)
+            pages.Add(MinecraftPrimitives.ReadString(rest[1..], out _));
+
+        return pages;
+    }
+
+    private PayloadFinding? InspectPluginMessage(DecodedPacket packet)
     {
         if (packet.Fields.Length > inspection.MaxPluginMessageBytes)
         {
-            return $"plugin message of {packet.Fields.Length} bytes, over the {inspection.MaxPluginMessageBytes}-byte limit";
+            return new PayloadFinding("oversized-plugin-message",
+                $"plugin message of {packet.Fields.Length} bytes, over the {inspection.MaxPluginMessageBytes}-byte limit",
+                PayloadSeverity.ProtocolViolation);
         }
 
         string channel;
@@ -308,17 +433,22 @@ public sealed class PlayStateInspector(
         }
         catch (Exception ex) when (ex is InvalidDataException or ArgumentOutOfRangeException)
         {
-            return "plugin message whose channel name could not be read";
+            return new PayloadFinding("unreadable-channel", "plugin message whose channel name could not be read",
+                PayloadSeverity.ProtocolViolation);
         }
 
+        // An assumption rather than a certainty: the identifier rules are strict, but a mod inventing
+        // its own channel naming is a far likelier explanation than an attack.
         return PayloadScanner.IsValidChannelName(channel)
             ? null
-            : $"plugin message on '{Truncate(channel)}', which is not a valid channel name";
+            : new PayloadFinding("malformed-channel",
+                $"plugin message on \'{Truncate(channel)}\', which is not a valid channel name",
+                PayloadSeverity.Assumption);
     }
 
     private void CountAttack()
     {
-        int perSecond = _attacks.Record(DateTimeOffset.UtcNow);
+        int perSecond = _attacks.Record(_now());
 
         // Reported once per connection. Click rate is the weakest kind of evidence — a macro mouse and
         // an autoclicker look identical from here, and so does a player with a very fast finger — so
@@ -337,8 +467,10 @@ public sealed class PlayStateInspector(
     /// <summary>Counts events inside the current second. Owned by one connection, so no locking.</summary>
     private sealed class SecondCounter
     {
-        private long _windowStart = DateTimeOffset.UtcNow.Ticks;
+        private long _windowStart;
         private int _count;
+
+        public SecondCounter(DateTimeOffset start) => _windowStart = start.Ticks;
 
         public int Record(DateTimeOffset now)
         {

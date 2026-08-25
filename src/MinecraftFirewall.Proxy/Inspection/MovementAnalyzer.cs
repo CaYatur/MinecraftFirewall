@@ -91,10 +91,20 @@ public sealed class MovementAnalyzer(InspectionOptions options)
         return CheckSpeed(x, y, z, now);
     }
 
-    /// <summary>Rotation-only and status-only packets carry no coordinates, so there is nothing to
-    /// check — but they do mean time has passed without a position, which would otherwise make the
-    /// next position look like a huge jump. Resetting the clock is what stops that.</summary>
-    public void NoteNonPositionalMovement() => _havePrevious = false;
+    /// <summary>
+    /// Rotation-only and status-only packets carry no coordinates, so there is nothing to check.
+    ///
+    /// Deliberately does nothing to the stored position. An earlier version cleared it, reasoning that
+    /// time had passed without a position — but a client sends rotation packets constantly while the
+    /// player looks around, so clearing on every one meant two consecutive positions were almost never
+    /// available to compare and the speed check effectively never ran. Worse, a cheat could have
+    /// switched it off entirely by interleaving one rotation packet between every movement. The
+    /// elapsed-time guard in CheckSpeed already covers the case this was written for: a gap longer
+    /// than two seconds is skipped rather than divided into.
+    /// </summary>
+    public void NoteNonPositionalMovement()
+    {
+    }
 
     private bool TryReadPosition(ReadOnlySpan<byte> fields, out double x, out double y, out double z)
     {

@@ -2,8 +2,29 @@ using System.Text;
 
 namespace MinecraftFirewall.Proxy.Inspection;
 
+/// <summary>
+/// How certain a finding is, which decides what it is allowed to cost the player.
+///
+/// Both tiers block the packet and close the connection. The difference is only in what goes on the
+/// address's record: a <see cref="ProtocolViolation"/> weighs enough to reach the ban threshold on
+/// its own, and an <see cref="Assumption"/> weighs one strike. That split exists because a
+/// machine-wide firewall ban is the one consequence this firewall cannot walk back, and it must never
+/// be reached by a rule whose premise is "no real client does this" when the real premise is "no
+/// client I know about does this".
+/// </summary>
+public enum PayloadSeverity
+{
+    /// <summary>Impossible under the protocol itself. Nothing legitimate produces it, whatever client
+    /// or mod is involved.</summary>
+    ProtocolViolation,
+
+    /// <summary>Rests on an assumption about how clients behave rather than on the protocol. Very
+    /// probably hostile; not certain enough to ban an address for on its own.</summary>
+    Assumption,
+}
+
 /// <summary>What a scan found, or null when the text was unremarkable.</summary>
-public sealed record PayloadFinding(string Rule, string Detail);
+public sealed record PayloadFinding(string Rule, string Detail, PayloadSeverity Severity);
 
 /// <summary>
 /// Looks at free-form player text for the shapes that attack whatever reads it next.
@@ -58,14 +79,16 @@ public static class PayloadScanner
     {
         if (text.Length > maxLength)
         {
+            // Vanilla's limit, and vanilla's server refuses longer messages too — but chat-extending
+            // mods exist, so this is an assumption about clients rather than a fact about the wire.
             return new PayloadFinding("oversized-text",
-                $"{text.Length} characters, over the protocol limit of {maxLength}");
+                $"{text.Length} characters, over the {maxLength}-character limit", PayloadSeverity.Assumption);
         }
 
         if (ContainsControlCharacters(text, out char offending))
         {
             return new PayloadFinding("control-characters",
-                $"contains U+{(int)offending:X4}, which a Minecraft client cannot type");
+                $"contains U+{(int)offending:X4}, which a Minecraft client does not send", PayloadSeverity.Assumption);
         }
 
         string normalized = NormalizeForLookupSearch(text);
@@ -73,8 +96,10 @@ public static class PayloadScanner
         {
             if (normalized.Contains(scheme, StringComparison.Ordinal))
             {
+                // The one rule here with no benefit of the doubt to extend. A remote-fetch lookup in
+                // player text has exactly one purpose.
                 return new PayloadFinding("injection-lookup",
-                    $"contains a '{scheme.TrimEnd(':')}' lookup after de-obfuscation");
+                    $"contains a '{scheme.TrimEnd(':')}' lookup after de-obfuscation", PayloadSeverity.ProtocolViolation);
             }
         }
 

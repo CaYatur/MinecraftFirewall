@@ -27,16 +27,35 @@ public sealed class BotDefenseOptions
     public bool Enabled { get; set; } = true;
 
     /// <summary>
-    /// Starts at <see cref="BotAction.LogOnly"/ > on purpose. Turning a heuristic loose on a live
+    /// Starts at <see cref="BotAction.LogOnly"/> on purpose. Turning a heuristic loose on a live
     /// server before anyone has seen what it scores is how a firewall ends up refusing the owner.
     /// The control panel shows the scores as they happen, so the decision to switch this to Deny can
     /// be made from evidence rather than hope.
     /// </summary>
     public BotAction Action { get; set; } = BotAction.LogOnly;
 
-    /// <summary>Score at or above which a connection is refused when <see cref="Action"/> is Deny.
-    /// Reaching 100 takes at least two independent strong signals, or one strong plus several weak.</summary>
-    public int DenyScore { get; set; } = 100;
+    /// <summary>
+    /// Score at or above which a connection is refused when <see cref="Action"/> is Deny.
+    ///
+    /// Worth showing the arithmetic, because a threshold nobody has checked is a threshold that either
+    /// never fires or fires on everyone. With the default weights below:
+    ///
+    ///   no ping + several usernames                     35 + 55 = 90       refused
+    ///   pings first, several usernames, looping              55 + 45 = 100      refused
+    ///   no ping + generated name + on a threat list     35 + 20 + 45 = 100      refused
+    ///   no ping + generated name                        35 + 20 = 55       allowed
+    ///   looping alone                                             45       allowed
+    ///   a threat-list hit alone                                   45       allowed
+    ///
+    /// So it takes two independent strong signals, and no single signal can refuse anyone by itself —
+    /// including an imported list, which is somebody else's judgement about traffic that never came
+    /// here.
+    ///
+    /// A bot author who adds one status ping before each login defeats the highest-weighted signal for
+    /// a one-line change. That is expected and is why the others exist: they still have to use one
+    /// username and reconnect like a person, and doing both is much more work than adding a ping.
+    /// </summary>
+    public int DenyScore { get; set; } = 90;
 
     /// <summary>Score at or above which the connection is reported even though it is allowed through.</summary>
     public int ReportScore { get; set; } = 60;

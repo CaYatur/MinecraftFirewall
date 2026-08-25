@@ -36,6 +36,42 @@ public static class MinecraftPacketBuilder
     public static byte[] BuildCompressedEmptyPacketFrame(int packetId) =>
         MinecraftFirewall.Proxy.Protocol.FrameWriter.WriteCompressedFrameUncompressedPayload(packetId, []);
 
+    /// <summary>Builds a Play-state move_player_pos frame: three big-endian doubles then a flags byte,
+    /// which is protocol 774's layout (since 1.21.2 the trailing field is flags, not a bare
+    /// on-ground boolean).</summary>
+    public static byte[] BuildMovementFrame(int packetId, double x, double y, double z, byte flags = 1)
+    {
+        var fields = new byte[25];
+        System.Buffers.Binary.BinaryPrimitives.WriteDoubleBigEndian(fields.AsSpan(0, 8), x);
+        System.Buffers.Binary.BinaryPrimitives.WriteDoubleBigEndian(fields.AsSpan(8, 8), y);
+        System.Buffers.Binary.BinaryPrimitives.WriteDoubleBigEndian(fields.AsSpan(16, 8), z);
+        fields[24] = flags;
+
+        return MinecraftFirewall.Proxy.Protocol.FrameWriter.WriteCompressedFrameUncompressedPayload(packetId, fields);
+    }
+
+    /// <summary>Builds a rotation-only movement frame — yaw, pitch, flags. Nine bytes, so it must not
+    /// be mistaken for a position packet.</summary>
+    public static byte[] BuildRotationFrame(int packetId) =>
+        MinecraftFirewall.Proxy.Protocol.FrameWriter.WriteCompressedFrameUncompressedPayload(packetId, new byte[9]);
+
+    /// <summary>Builds a Sign Update frame: a block position, a front/back flag, then four lines.</summary>
+    public static byte[] BuildSignUpdateFrame(int packetId, params string[] lines)
+    {
+        var fields = new List<byte>(new byte[8 + 1]);
+        foreach (string line in lines)
+            fields.AddRange(EncodeString(line));
+
+        return MinecraftFirewall.Proxy.Protocol.FrameWriter.WriteCompressedFrameUncompressedPayload(packetId, [.. fields]);
+    }
+
+    /// <summary>Builds a plugin-message frame: a channel identifier then opaque bytes.</summary>
+    public static byte[] BuildPluginMessageFrame(int packetId, string channel, int payloadBytes = 4)
+    {
+        byte[] fields = [.. EncodeString(channel), .. new byte[payloadBytes]];
+        return MinecraftFirewall.Proxy.Protocol.FrameWriter.WriteCompressedFrameUncompressedPayload(packetId, fields);
+    }
+
     private static byte[] WrapFrame(byte[] payload) => [.. VarInt.Encode(payload.Length), .. payload];
 
     public static byte[] EncodeString(string text)

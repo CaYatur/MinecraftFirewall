@@ -293,14 +293,28 @@ public sealed class PolicyEngine(
             $"`{AlertText.Field(username)}` from `{AlertText.Field(remoteAddress.ToString())}` — {AlertText.Field(detail)}");
     }
 
-    /// <summary>Called when deep inspection refused a packet — an injection payload, an impossible
-    /// coordinate, a malformed plugin message. These are things no Minecraft client sends, so unlike a
-    /// movement heuristic there is no benefit of the doubt to extend.</summary>
-    public void RegisterProtocolViolation(IPAddress remoteAddress, string profileName, string username, string detail)
+    /// <summary>
+    /// Called when deep inspection refused a packet.
+    ///
+    /// The packet is blocked and the connection closed either way; <paramref name="unambiguous"/> only
+    /// decides how much this costs the address on its record. An injection lookup, a NaN coordinate or
+    /// a username past the protocol's own length limit is impossible under the protocol whatever
+    /// client is involved, and weighs enough to reach the ban threshold at once. A rule resting on how
+    /// clients are expected to behave — a formatting code that a vanilla client would have stripped, a
+    /// chat message longer than vanilla allows — weighs one strike instead.
+    ///
+    /// The distinction matters because of a guarantee this whole project is built around: the genuine
+    /// owner of a premium-locked username must never be refused. A machine-wide firewall ban would
+    /// refuse them from every address at once, and it is the one consequence here that cannot be
+    /// walked back. It must not be reachable by a single chat message from a client whose behaviour
+    /// merely surprised us.
+    /// </summary>
+    public void RegisterProtocolViolation(IPAddress remoteAddress, string profileName, string username, string detail,
+        bool unambiguous = true)
     {
         RegisterStrikeAndMaybeBan(remoteAddress,
             $"[{profileName}] '{username}' sent something no client sends: {detail}",
-            weight: _banOptions.StrikesBeforeBan);
+            weight: unambiguous ? _banOptions.StrikesBeforeBan : 1);
 
         alerts.Send(AlertKind.DangerousCommand,
             $"🧬 **Blocked packet** on `{AlertText.Field(profileName)}`\n" +

@@ -54,13 +54,18 @@ public sealed class ServerProfileEdit
 }
 
 /// <summary>
-/// Reads and writes the <c>ServerProfiles</c> section of the service's appsettings.json on behalf of
-/// the UI.
+/// Reads and writes the parts of the service's appsettings.json that the control panel edits.
 ///
-/// Edits are applied to the parsed JSON document and written back, rather than the whole file being
-/// regenerated from a model. The shipped file is full of explanatory comments and sections this
-/// editor knows nothing about (Serilog, VpnIntel, Messages, and so on); regenerating it would silently
-/// destroy all of that the first time someone renamed a server.
+/// Writes go through <see cref="JsonTextSurgery"/>, which splices new text over the exact span of the
+/// value being changed and leaves the rest of the file untouched. The first version of this class
+/// intended the same thing but did not achieve it: it parsed with <c>JsonCommentHandling.Skip</c> and
+/// wrote the document back through <c>JsonNode</c>, and "Skip" means the comments are dropped, not set
+/// aside. The shipped file is more explanation than configuration — a hundred-odd lines saying why the
+/// honeypot ships off, why movement analysis only reports, why disabling premium verification denies
+/// rather than falls back — and renaming a server from the UI would have deleted every word of it.
+///
+/// A round-trip test asserts the comment count is unchanged, because this is a failure nobody would
+/// notice until they went looking for an explanation that used to be there.
 /// </summary>
 public sealed class ServerConfigStore
 {
@@ -73,7 +78,14 @@ public sealed class ServerConfigStore
 
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
 
-    public string ConfigPath { get; } = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+    /// <summary>Defaults to the file next to the executable — the control panel and the service are
+    /// installed into the same directory, which is what makes that the right place to look. The
+    /// parameter exists so tests can exercise the real writer against a disposable copy of the real
+    /// file rather than against a hand-built fixture that would not have the comments in it.</summary>
+    public ServerConfigStore(string? configPath = null) =>
+        ConfigPath = configPath ?? Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+
+    public string ConfigPath { get; }
 
     public bool Exists => File.Exists(ConfigPath);
 
@@ -143,16 +155,11 @@ public sealed class ServerConfigStore
         try
         {
             string original = File.ReadAllText(ConfigPath);
-            JsonNode root = JsonNode.Parse(original, documentOptions: new JsonDocumentOptions
-            {
-                CommentHandling = JsonCommentHandling.Skip,
-                AllowTrailingCommas = true,
-            }) ?? throw new InvalidDataException("Configuration file is empty.");
 
             var array = new JsonArray();
             foreach (ServerProfileEdit profile in profiles)
             {
-                var node = new JsonObject
+                array.Add(new JsonObject
                 {
                     ["Name"] = profile.Name,
                     ["PublicPort"] = profile.PublicPort,
@@ -160,22 +167,127 @@ public sealed class ServerConfigStore
                     ["BackendPort"] = profile.BackendPort,
                     ["AllowedHostnames"] = new JsonArray([.. profile.AllowedHostnames.Select(h => (JsonNode)h!)]),
                     ["ProtectedUsernames"] = new JsonArray([.. profile.ProtectedUsernames.Select(ToNode)]),
-                };
-                array.Add(node);
+                });
             }
 
-            root["ServerProfiles"] = array;
+            string? updated = JsonTextSurgery.ReplaceValue(original, ["ServerProfiles"], array.ToJsonString(WriteOptions));
+            if (updated is null)
+            {
+                return (false, "Could not find a ServerProfiles section in the configuration file. " +
+                               "Nothing was written — add the section by hand, or restore appsettings.default.json.");
+            }
 
-            // Back up before overwriting: this file also holds hand-written settings and comments the
-            // editor drops (JsonNode does not preserve them), so a recoverable copy matters.
-            string backup = ConfigPath + ".backup";
-            File.WriteAllText(backup, original);
+            return WriteAtomically(original, updated);
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
 
-            string temp = ConfigPath + ".tmp";
-            File.WriteAllText(temp, root.ToJsonString(WriteOptions));
-            File.Move(temp, ConfigPath, overwrite: true);
+    /// <summary>Writes through a temp file and keeps one backup. The surgery above means a crash
+    /// mid-write is the only way to lose anything now, and this closes that too.</summary>
+    private (bool Success, string Message) WriteAtomically(string original, string updated)
+    {
+        string backup = ConfigPath + ".backup";
+        File.WriteAllText(backup, original);
 
-            return (true, $"Saved. A copy of the previous file is at {Path.GetFileName(backup)}.");
+        string temp = ConfigPath + ".tmp";
+        File.WriteAllText(temp, updated);
+        File.Move(temp, ConfigPath, overwrite: true);
+
+        return (true, $"Saved. A copy of the previous file is at {Path.GetFileName(backup)}.");
+    }
+
+    // ---- generic settings access ---------------------------------------------------------------
+    // The control panel exposes a handful of individual switches from sections it does not otherwise
+    // understand (premium auto-claim, the honeypot, bot enforcement, movement kicking). Rather than a
+    // bespoke reader and writer for each, these two walk a property path — and the write goes through
+    // the same surgery as everything else, so flipping one checkbox does not rewrite the file.
+
+    /// <summary>Reads a boolean at a property path, falling back when it is missing or unreadable.
+    /// The fallback should always be the safe direction, since a damaged file must not silently turn
+    /// a protection on or off.</summary>
+    public bool GetBool(string[] path, bool fallback)
+    {
+        try
+        {
+            JsonNode? node = JsonNode.Parse(File.ReadAllText(ConfigPath), documentOptions: new JsonDocumentOptions
+            {
+                CommentHandling = JsonCommentHandling.Skip,
+                AllowTrailingCommas = true,
+            });
+
+            foreach (string segment in path)
+            {
+                node = node?[segment];
+                if (node is null)
+                    return fallback;
+            }
+
+            return node!.GetValue<bool>();
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
+    /// <summary>Reads a string at a property path — used for the enum-valued settings (BotDefense
+    /// Action, ThreatIntel Action) the UI presents as a choice.</summary>
+    public string GetString(string[] path, string fallback)
+    {
+        try
+        {
+            JsonNode? node = JsonNode.Parse(File.ReadAllText(ConfigPath), documentOptions: new JsonDocumentOptions
+            {
+                CommentHandling = JsonCommentHandling.Skip,
+                AllowTrailingCommas = true,
+            });
+
+            foreach (string segment in path)
+            {
+                node = node?[segment];
+                if (node is null)
+                    return fallback;
+            }
+
+            return node!.GetValue<string>();
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
+    public (bool Success, string Message) SetBool(string[] path, bool value) =>
+        SetLiteral(path, value ? "true" : "false");
+
+    public (bool Success, string Message) SetString(string[] path, string value) =>
+        SetLiteral(path, JsonSerializer.Serialize(value));
+
+    /// <summary>
+    /// Splices a JSON literal over the value at a property path.
+    ///
+    /// A missing path is reported rather than created. Adding a section by hand would mean guessing
+    /// where in the file it belongs and what to say about it, and every setting the UI offers is one
+    /// the shipped appsettings.json already documents — so a path that is not there means the user is
+    /// editing a file this app did not ship, and silently appending to it would be the wrong help.
+    /// </summary>
+    private (bool Success, string Message) SetLiteral(string[] path, string literal)
+    {
+        try
+        {
+            string original = File.ReadAllText(ConfigPath);
+            string? updated = JsonTextSurgery.ReplaceValue(original, path, literal);
+
+            if (updated is null)
+            {
+                return (false, $"Could not find \"{string.Join(" > ", path)}\" in the configuration file. " +
+                               "Nothing was written — check appsettings.default.json for the section this setting lives in.");
+            }
+
+            return WriteAtomically(original, updated);
         }
         catch (Exception ex)
         {
@@ -185,54 +297,10 @@ public sealed class ServerConfigStore
 
     /// <summary>Reads Premium.AutoClaimOnVerifiedLogin. Defaults to false — the safe direction, and
     /// the same default the service itself uses if the key is absent.</summary>
-    public bool GetAutoPremium()
-    {
-        try
-        {
-            JsonNode? root = JsonNode.Parse(File.ReadAllText(ConfigPath), documentOptions: new JsonDocumentOptions
-            {
-                CommentHandling = JsonCommentHandling.Skip,
-                AllowTrailingCommas = true,
-            });
-            return root?["Premium"]?["AutoClaimOnVerifiedLogin"]?.GetValue<bool>() ?? false;
-        }
-        catch
-        {
-            return false;
-        }
-    }
+    public bool GetAutoPremium() => GetBool(["Premium", "AutoClaimOnVerifiedLogin"], false);
 
-    public (bool Success, string Message) SetAutoPremium(bool enabled)
-    {
-        try
-        {
-            string original = File.ReadAllText(ConfigPath);
-            JsonNode root = JsonNode.Parse(original, documentOptions: new JsonDocumentOptions
-            {
-                CommentHandling = JsonCommentHandling.Skip,
-                AllowTrailingCommas = true,
-            }) ?? throw new InvalidDataException("Configuration file is empty.");
-
-            if (root["Premium"] is not JsonObject premium)
-            {
-                premium = [];
-                root["Premium"] = premium;
-            }
-
-            premium["AutoClaimOnVerifiedLogin"] = enabled;
-
-            File.WriteAllText(ConfigPath + ".backup", original);
-            string temp = ConfigPath + ".tmp";
-            File.WriteAllText(temp, root.ToJsonString(WriteOptions));
-            File.Move(temp, ConfigPath, overwrite: true);
-
-            return (true, "Saved.");
-        }
-        catch (Exception ex)
-        {
-            return (false, ex.Message);
-        }
-    }
+    public (bool Success, string Message) SetAutoPremium(bool enabled) =>
+        SetBool(["Premium", "AutoClaimOnVerifiedLogin"], enabled);
 
     private static JsonNode ToNode(ProtectedNameEdit entry)
     {

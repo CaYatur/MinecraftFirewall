@@ -24,28 +24,34 @@ public sealed class ThreatFeedService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!_options.Enabled)
-            return;
-
-        Directory.CreateDirectory(_options.CacheDirectory);
+        // The local observation log is loaded and saved whether or not the imported feeds are
+        // switched on. Those are two different things wearing one section name: what this machine
+        // caught on its own honeypot ports belongs to the honeypot, and turning off a subscription to
+        // other people's lists should not quietly stop recording your own catches. An earlier version
+        // gated both on Enabled, so a server with the honeypot on and the feed off recorded hits in
+        // memory and lost them at every restart, silently.
         intelligence.Load();
-        LoadFromDiskCache();
 
-        // The local threat log is written far more often than the feeds are fetched, so the two run
-        // on their own cadences rather than sharing the daily one.
+        // Written far more often than the feeds are fetched, so it runs on its own cadence.
         Task saving = SaveLoopAsync(stoppingToken);
 
-        while (!stoppingToken.IsCancellationRequested)
+        if (_options.Enabled)
         {
-            await RefreshNowAsync(stoppingToken).ConfigureAwait(false);
+            Directory.CreateDirectory(_options.CacheDirectory);
+            LoadFromDiskCache();
 
-            try
+            while (!stoppingToken.IsCancellationRequested)
             {
-                await Task.Delay(_options.RefreshInterval, stoppingToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
+                await RefreshNowAsync(stoppingToken).ConfigureAwait(false);
+
+                try
+                {
+                    await Task.Delay(_options.RefreshInterval, stoppingToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
         }
 

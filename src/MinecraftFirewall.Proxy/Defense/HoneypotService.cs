@@ -63,7 +63,7 @@ public sealed class HoneypotService(
     /// <summary>Configured ports minus any a real server profile is already using. Both the public
     /// and backend ports are excluded: binding a decoy on a backend port would sit between the proxy
     /// and the actual Minecraft server.</summary>
-    private int[] UsablePorts()
+    internal int[] UsablePorts()
     {
         var taken = new HashSet<int>();
         foreach (ServerProfile profile in profiles)

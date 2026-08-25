@@ -20,6 +20,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\MinecraftFirewall.Proxy\MinecraftFirewall.Proxy.csproj" />
+    <!-- For the control panel's configuration editor. It is the component that writes to the user's
+         appsettings.json, so "does saving preserve everything it did not mean to change" needs to be
+         a test rather than a hope. WPF itself is never constructed by these tests. -->
+    <ProjectReference Include="..\..\src\MinecraftFirewall.App\MinecraftFirewall.App.csproj" />
   </ItemGroup>
 
 </Project>
