@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/MinecraftFirewall.Admin/MinecraftFirewall.Admin.csproj" />
+    <Project Path="src/MinecraftFirewall.App/MinecraftFirewall.App.csproj" />
     <Project Path="src/MinecraftFirewall.Proxy/MinecraftFirewall.Proxy.csproj" />
   </Folder>
   <Folder Name="/tests/">

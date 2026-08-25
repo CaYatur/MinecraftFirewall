@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <!-- For the tray icon: WPF has no NotifyIcon of its own, and WinForms' is the standard
+         no-extra-dependency way to get one. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>MinecraftFirewall.App</RootNamespace>
+    <AssemblyName>MinecraftFirewall</AssemblyName>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <!-- The console needs elevation for everything it does: controlling the Windows service and
+         connecting to the Administrators-only admin pipe. Requesting it up front means one UAC
+         prompt at launch rather than a confusing failure on the first action. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Deliberately NOT InvariantGlobalization, unlike MinecraftFirewall.Proxy. WPF's font cache
+         constructs CultureInfo("en") while measuring text, which throws outright in invariant mode —
+         the window dies on its very first TextBlock. Caught by running the app, not by building it. -->
+    <AssemblyTitle>MinecraftFirewall</AssemblyTitle>
+    <Product>MinecraftFirewall</Product>
+    <Version>1.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pinned to match what MinecraftFirewall.Proxy already pulls in transitively via
+         Microsoft.Extensions.Hosting.WindowsServices; a lower version here is a package downgrade. -->
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- For AdminProtocol (the pipe's request/response contract) only — the console never hosts the
+         proxy itself; the Windows service does. -->
+    <ProjectReference Include="..\MinecraftFirewall.Proxy\MinecraftFirewall.Proxy.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- WinForms is referenced only for NotifyIcon (the tray), but its implicit usings make
+         `Application`, `MessageBox` and friends ambiguous against their WPF namesakes. Dropping the
+         implicit usings means WPF's types win by default and the handful of WinForms types in use
+         are reached through the explicit `Forms` alias, which is far harder to misread. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+</Project>
