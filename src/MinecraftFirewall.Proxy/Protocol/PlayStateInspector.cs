@@ -126,7 +126,11 @@ public sealed class PlayStateInspector(
             if (_packetKinds.Count < 128)
                 _packetKinds.Add(packet.PacketId);
 
-            if (packetIds.IsMovement(packet.PacketId))
+            // Counted only once in Play state. Packet IDs live in per-phase namespaces, so a
+            // Configuration-phase packet can share a number with a Play movement packet and would
+            // otherwise be tallied as movement — the same namespace collision that once made the very
+            // first packet of every connection get misidentified (see the note below).
+            if (_inPlayState && packetIds.IsMovement(packet.PacketId))
                 _movementPackets++;
 
             // Charged before anything is decided about the packet. A flood is defined by its volume,
@@ -324,8 +328,14 @@ public sealed class PlayStateInspector(
         if (packet.PacketId == packetIds.PlayCustomPayloadServerbound)
             return InspectPluginMessage(packet);
 
-        if (packet.PacketId == packetIds.PlaySignUpdateServerbound || packet.PacketId == packetIds.PlayEditBookServerbound)
+        // Chat and commands are handled further down, where the grace-authentication and dangerous-command
+        // logic also needs the decoded text; this covers the other two kinds IsTextCarrying names.
+        if (packetIds.IsTextCarrying(packet.PacketId) && packet.PacketId != packetIds.PlayChatServerbound
+            && packet.PacketId != packetIds.PlayChatCommandServerbound
+            && packet.PacketId != packetIds.PlayChatCommandSignedServerbound)
+        {
             return InspectWrittenText(packet);
+        }
 
         if (packet.PacketId == packetIds.PlayInteractServerbound || packet.PacketId == packetIds.PlaySwingServerbound)
         {

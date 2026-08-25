@@ -352,6 +352,8 @@ public partial class MainWindow : Window
     /// </summary>
     private void LoadDefenseSettings()
     {
+        ShowUpgradeBannerIfNeeded();
+
         _suppressEvents = true;
         try
         {
@@ -372,6 +374,41 @@ public partial class MainWindow : Window
         finally
         {
             _suppressEvents = false;
+        }
+    }
+
+    /// <summary>
+    /// Warns when the configuration predates the settings on this page.
+    ///
+    /// The installer never overwrites appsettings.json, which is right — it holds the user's servers,
+    /// protected usernames and webhook. The consequence is that an installation upgraded from an
+    /// earlier release has no section for anything added since, and every switch here would fail with
+    /// "could not find that setting". Saying so up front, with one button that fixes it, is the
+    /// difference between an obvious upgrade step and a page that appears broken.
+    /// </summary>
+    private void ShowUpgradeBannerIfNeeded()
+    {
+        IReadOnlyList<string> missing = _config.MissingSections();
+
+        if (missing.Count == 0)
+        {
+            UpgradeBanner.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        UpgradeBanner.Visibility = Visibility.Visible;
+        UpgradeDetail.Text = Strings.Current.Format("UpgradeDetail", string.Join(", ", missing));
+    }
+
+    private async void BtnAddSections_Click(object sender, RoutedEventArgs e)
+    {
+        (bool success, string message) = _config.AddMissingSections();
+        Toast(message, success);
+
+        if (success)
+        {
+            LoadDefenseSettings();
+            await RefreshDefenseAsync();
         }
     }
 

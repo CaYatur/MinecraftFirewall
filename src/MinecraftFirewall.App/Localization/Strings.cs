@@ -37,6 +37,17 @@ public sealed class Strings : INotifyPropertyChanged
     /// <summary>Formats a localized string that contains {0}-style placeholders.</summary>
     public string Format(string key, params object[] args) => string.Format(this[key], args);
 
+    /// <summary>
+    /// Every key one language defines. Exposed so a test can assert the two dictionaries stay in step.
+    ///
+    /// Worth having because the lookup above falls back to English for a missing key, which is the
+    /// right behaviour at runtime — an English label beats a blank one — and exactly what makes the
+    /// omission invisible. With every new page adding twenty or thirty strings at a time, a forgotten
+    /// translation is a matter of when rather than whether, and nothing else would ever notice.
+    /// </summary>
+    public static IReadOnlyCollection<string> KeysFor(string code) =>
+        (code == "tr" ? Turkish : English).Keys;
+
     private static readonly Dictionary<string, string> English = new()
     {
         // Shell
@@ -68,6 +79,9 @@ public sealed class Strings : INotifyPropertyChanged
         ["BtnInstall"] = "Install service",
         ["BtnUninstall"] = "Remove service",
         ["NavDefense"] = "Protection",
+        ["UpgradeTitle"] = "Your configuration is missing some settings",
+        ["UpgradeDetail"] = "This version added settings your appsettings.json does not have yet: {0}. Your file was left alone during the upgrade \u2014 which is right, since it holds your servers and protected usernames \u2014 but the switches below cannot be saved until the sections exist. Adding them copies the shipped defaults across, with their explanations, and changes nothing you have already set.",
+        ["BtnAddSections"] = "Add the missing settings",
         ["DefLiveTitle"] = "Right now",
         ["DefLiveBlurb"] = "Live counters from the running service. Connections it is holding, addresses it is tracking, and how many it has turned away since it started.",
         ["DefenseUnavailable"] = "The service is not running, so there are no live figures to show.",
@@ -233,6 +247,9 @@ public sealed class Strings : INotifyPropertyChanged
         ["BtnInstall"] = "Servisi kur",
         ["BtnUninstall"] = "Servisi kaldır",
         ["NavDefense"] = "Koruma",
+        ["UpgradeTitle"] = "Ayar dosyanızda eksik bölümler var",
+        ["UpgradeDetail"] = "Bu sürüm, appsettings.json dosyanızda henüz bulunmayan ayarlar ekledi: {0}. Yükseltme sırasında dosyanıza dokunulmadı \u2014 sunucularınızı ve korumalı kullanıcı adlarınızı tuttuğu için bu doğrudur \u2014 ancak bölümler oluşana kadar aşağıdaki anahtarlar kaydedilemez. Eklemek, varsayılanları açıklamalarıyla birlikte kopyalar ve daha önce yaptığınız hiçbir ayarı değiştirmez.",
+        ["BtnAddSections"] = "Eksik ayarları ekle",
         ["DefLiveTitle"] = "Şu anda",
         ["DefLiveBlurb"] = "Çalışan hizmetten canlı sayaçlar. Açık tuttuğu bağlantılar, izlediği adresler ve başladığından beri geri çevirdikleri.",
         ["DefenseUnavailable"] = "Hizmet çalışmıyor, bu yüzden gösterilecek canlı veri yok.",

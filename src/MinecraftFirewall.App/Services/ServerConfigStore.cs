@@ -199,6 +199,86 @@ public sealed class ServerConfigStore
         return (true, $"Saved. A copy of the previous file is at {Path.GetFileName(backup)}.");
     }
 
+    // ---- upgrade repair --------------------------------------------------------------------------
+
+    /// <summary>Sections the control panel needs, in the order they should be added back.</summary>
+    private static readonly string[] ExpectedSections =
+    [
+        "DdosProtection", "BotDefense", "Honeypot", "ThreatIntel", "DeepInspection", "AnomalyDetection",
+    ];
+
+    /// <summary>The pristine copy the installer drops beside the live file. It is the source for
+    /// anything the live one is missing, and is refreshed on every install.</summary>
+    public string DefaultConfigPath => Path.Combine(Path.GetDirectoryName(ConfigPath) ?? ".", "appsettings.default.json");
+
+    /// <summary>
+    /// Sections this release expects that the user's configuration does not have.
+    ///
+    /// Upgrades are the reason this exists. The installer deliberately never overwrites
+    /// appsettings.json — it holds the servers, the protected usernames and the webhook, none of which
+    /// can be regenerated — so an installation that predates a feature keeps a file with no section
+    /// for it. Nothing about that is visible until a switch fails, which is the worst moment to find
+    /// out.
+    /// </summary>
+    public IReadOnlyList<string> MissingSections()
+    {
+        try
+        {
+            JsonNode? root = JsonNode.Parse(File.ReadAllText(ConfigPath), documentOptions: new JsonDocumentOptions
+            {
+                CommentHandling = JsonCommentHandling.Skip,
+                AllowTrailingCommas = true,
+            });
+
+            return root is null ? [] : [.. ExpectedSections.Where(name => root[name] is null)];
+        }
+        catch
+        {
+            // An unreadable file is a different problem, reported elsewhere. Claiming everything is
+            // missing would offer a repair that could not work.
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Copies any missing sections across from the shipped default, comments and all.
+    ///
+    /// Deliberately a thing the user asks for rather than something that happens on startup. Silently
+    /// adding settings to somebody's configuration file is the same class of behaviour as silently
+    /// removing their comments, and the whole point of the surgical writer is that this app does not
+    /// do that.
+    /// </summary>
+    public (bool Success, string Message) AddMissingSections()
+    {
+        try
+        {
+            IReadOnlyList<string> missing = MissingSections();
+            if (missing.Count == 0)
+                return (true, "Your configuration already has every section this version uses.");
+
+            if (!File.Exists(DefaultConfigPath))
+            {
+                return (false, $"Could not find {Path.GetFileName(DefaultConfigPath)} next to the app, " +
+                               "so there is nothing to copy the missing settings from.");
+            }
+
+            string original = File.ReadAllText(ConfigPath);
+            string? updated = JsonTextSurgery.CopySections(original, File.ReadAllText(DefaultConfigPath), missing);
+
+            if (updated is null)
+                return (false, "Could not read those sections out of the shipped defaults. Nothing was written.");
+
+            (bool success, string message) = WriteAtomically(original, updated);
+            return success
+                ? (true, $"Added {string.Join(", ", missing)}. Restart the service to apply them.")
+                : (false, message);
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
     // ---- generic settings access ---------------------------------------------------------------
     // The control panel exposes a handful of individual switches from sections it does not otherwise
     // understand (premium auto-claim, the honeypot, bot enforcement, movement kicking). Rather than a

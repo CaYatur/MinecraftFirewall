@@ -265,6 +265,16 @@
 
                     <!-- ===================== DEFENCE ===================== -->
                     <StackPanel x:Name="PageDefense" Visibility="Collapsed">
+                        <Border x:Name="UpgradeBanner" Visibility="Collapsed" Background="#1A0F13" BorderBrush="#3A1620"
+                                BorderThickness="1" CornerRadius="4" Padding="18,15" Margin="0,0,0,14">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Foreground="#E8B4BC" Text="{loc:T UpgradeTitle}"/>
+                                <TextBlock x:Name="UpgradeDetail" Style="{StaticResource Muted}" Foreground="#E8B4BC" Margin="0,4,0,0"/>
+                                <Button x:Name="BtnAddSections" Content="{loc:T BtnAddSections}" Style="{StaticResource PrimaryButton}"
+                                        HorizontalAlignment="Left" Margin="0,14,0,0" Click="BtnAddSections_Click"/>
+                            </StackPanel>
+                        </Border>
+
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource H2}" Text="{loc:T DefLiveTitle}"/>

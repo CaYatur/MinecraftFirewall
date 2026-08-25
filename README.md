@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-425%20passing-4ade80?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-444%20passing-4ade80?style=flat-square">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078d4?style=flat-square">
   <img alt=".NET" src="https://img.shields.io/badge/.NET-10-512bd4?style=flat-square">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
@@ -412,7 +412,7 @@ src/MinecraftFirewall.Proxy/    The service itself
 src/MinecraftFirewall.App/      The control panel (WPF)
 src/MinecraftFirewall.Admin/    Companion CLI
 installer/                      Inno Setup script + build.ps1 that produces the setup .exe
-tests/MinecraftFirewall.Tests/  425 tests — no real server, no admin rights, no real firewall touched
+tests/MinecraftFirewall.Tests/  444 tests — no real server, no admin rights, no real firewall touched
 tools/                          Diagnostic client used to verify wire behaviour against a real server
 docs/plan.md                    Full design doc: every decision, and how each was verified
 ```

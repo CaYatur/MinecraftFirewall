@@ -64,7 +64,16 @@ public sealed class ThreatFeedService(
     public async Task RefreshNowAsync(CancellationToken ct)
     {
         if (_options.FeedUrls.Count == 0)
+        {
+            // Enabled with nothing to fetch. Silence here reads as "working" while the imported list
+            // stays empty forever — and the way it happens in practice is an upgrade from a release
+            // that predates this section, leaving the option object on its (empty) compiled defaults.
+            logger.LogWarning(
+                "Threat intelligence is enabled but no feed URLs are configured, so no list will be imported. " +
+                "Add a ThreatIntel section to appsettings.json — the control panel offers to do this for you, " +
+                "or copy it from appsettings.default.json.");
             return;
+        }
 
         var lines = new List<string>();
         int fetched = 0;

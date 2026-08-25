@@ -43,6 +43,126 @@ public static class JsonTextSurgery
         return string.Concat(json.AsSpan(0, start), indented, json.AsSpan(end));
     }
 
+    /// <summary>
+    /// Copies whole top-level sections from one document into another, inserting them just before the
+    /// root object closes.
+    ///
+    /// This exists for upgrades. A release that adds settings ships them in its own appsettings.json,
+    /// but an existing installation keeps the file it already has — which is the right default, since
+    /// that file holds the user's servers and protected usernames. The consequence is a configuration
+    /// with no section for the new features at all, and every switch for them failing with "could not
+    /// find that setting". Copying the section across, comments and all, is what closes that gap
+    /// without touching anything the user wrote.
+    ///
+    /// Returns null if any requested section is missing from the source, since a half-applied repair
+    /// would be worse than none.
+    /// </summary>
+    public static string? CopySections(string target, string source, IReadOnlyList<string> sectionNames)
+    {
+        if (sectionNames.Count == 0)
+            return target;
+
+        var blocks = new List<string>();
+        foreach (string name in sectionNames)
+        {
+            if (!TryFindValueSpan(source, [name], out int start, out int end))
+                return null;
+
+            // The comment block immediately above a section is part of it as far as a reader is
+            // concerned — it is where the explanation of what the setting does actually lives, and
+            // copying the value without it would deliver settings nobody can interpret.
+            int commentStart = StartOfLeadingComments(source, start, name);
+
+            blocks.Add(source[commentStart..end].TrimEnd());
+        }
+
+        int insertAt = EndOfRootObject(target);
+        if (insertAt < 0)
+            return null;
+
+        // The property this is being inserted after has no comma of its own — it was the last one. So
+        // one has to be added here, unless the root object is empty or already ends in a comma. Getting
+        // this wrong produces a file that looks right and does not parse, which is the worst outcome
+        // available for a repair whose entire purpose is not to damage anyone's configuration.
+        string separator = Environment.NewLine + Environment.NewLine + "  ";
+        string lead = NeedsSeparatingComma(target, insertAt) ? "," : "";
+        string added = lead + separator + string.Join("," + separator, blocks);
+
+        return string.Concat(target.AsSpan(0, insertAt), added, Environment.NewLine, target.AsSpan(insertAt));
+    }
+
+    /// <summary>True when the character before the root object's closing brace is the end of a value
+    /// rather than an opening brace or an existing comma. Comments and whitespace are stepped over —
+    /// a trailing explanation before the final brace is common in this project's own config.</summary>
+    private static bool NeedsSeparatingComma(string json, int closingBrace)
+    {
+        int i = closingBrace - 1;
+
+        while (i >= 0)
+        {
+            if (char.IsWhiteSpace(json[i]))
+            {
+                i--;
+                continue;
+            }
+
+            // A line comment is only recognisable by scanning forward from its start, so step back to
+            // the beginning of the line and check whether it is one.
+            int lineStart = json.LastIndexOf('\n', i) + 1;
+            string line = json[lineStart..(i + 1)].TrimStart();
+            if (line.StartsWith("//", StringComparison.Ordinal))
+            {
+                i = lineStart - 1;
+                continue;
+            }
+
+            return json[i] is not ('{' or ',');
+        }
+
+        return false;
+    }
+
+    /// <summary>Walks backwards from a property's value to the start of the comment block introducing
+    /// it, including the property name itself.</summary>
+    private static int StartOfLeadingComments(string json, int valueStart, string name)
+    {
+        int nameIndex = json.LastIndexOf('"' + name + '"', valueStart, StringComparison.Ordinal);
+        if (nameIndex < 0)
+            return valueStart;
+
+        int lineStart = json.LastIndexOf('\n', nameIndex) + 1;
+
+        // Step back over contiguous comment lines. A blank line ends the block: comments separated
+        // from a property by an empty line belong to whatever came before it.
+        while (lineStart > 0)
+        {
+            int previousStart = json.LastIndexOf('\n', lineStart - 2) + 1;
+            if (previousStart < 0 || previousStart >= lineStart)
+                break;
+
+            string previous = json[previousStart..(lineStart - 1)].Trim();
+            if (!previous.StartsWith("//", StringComparison.Ordinal))
+                break;
+
+            lineStart = previousStart;
+        }
+
+        return lineStart;
+    }
+
+    /// <summary>Index of the root object's closing brace, so new properties can be inserted before it.
+    /// Found by matching rather than by searching for the last brace, which would land inside a
+    /// trailing comment.</summary>
+    private static int EndOfRootObject(string json)
+    {
+        int start = SkipTrivia(json, 0);
+        if (start >= json.Length || json[start] != '{')
+            return -1;
+
+        int end = SkipBalanced(json, start, '{', '}');
+        return end <= start ? -1 : end - 1;
+    }
+
     /// <summary>Finds the character span of the value at a property path, exclusive of surrounding
     /// whitespace. <paramref name="path"/> walks nested objects: ["Premium", "AutoClaim"].</summary>
     public static bool TryFindValueSpan(string json, IReadOnlyList<string> path, out int start, out int end)
