@@ -79,37 +79,35 @@ sc.exe create MinecraftFirewall binPath= "C:\MinecraftFirewall\MinecraftFirewall
 
 ```mermaid
 flowchart TD
-    A[Player connects] --> B{IP already banned?}
+    A[Player connects] --> B{"Banned IP, disallowed domain,<br/>or too many attempts?"}
     B -->|yes| X[Refused]
-    B -->|no| C{Connecting through<br/>an allowed domain?}
-    C -->|no| X
-    C -->|yes| D{Too many attempts<br/>from this IP?}
-    D -->|yes| X
-    D -->|no| E{Is this username<br/>protected?}
+    B -->|no| E{Is this username protected?}
 
-    E -->|"not protected"| PASS[Forwarded to your server]
-    E -->|"premium-locked"| F{Real Mojang account,<br/>and the right one?}
-    E -->|"IP allowlist"| G{IP on the list?}
-    E -->|"has a password"| H{IP recognised<br/>from before?}
+    E -->|"no — ordinary player"| V
+    E -->|"premium-locked"| F{"A real Mojang account —<br/>and the right one?"}
+    E -->|"pinned to certain IPs"| G{IP on the list?}
+    E -->|"has a password"| H{IP seen before?}
 
     F -->|no| X
-    F -->|yes| PASS
+    F -->|yes| V
     G -->|no| X
-    G -->|yes| I
-    H -->|yes| I
-    H -->|no| J["Joins, but the first thing they type<br/>must be /login &lt;password&gt;"]
+    G -->|yes| V
+    H -->|yes| V
+    H -->|no| J["Joins — but their first message<br/>must be /login &lt;password&gt;"]
     J -->|wrong| X
-    J -->|correct| I
+    J -->|correct| V
 
-    I{VPN or datacenter IP?} -->|"yes, and blocked by policy"| X
-    I -->|no| PASS
+    V{VPN or datacenter IP?} -->|"yes, if your policy blocks it"| X
+    V -->|no| PASS[Forwarded to your server]
 
     style X fill:#7f1d1d,stroke:#dc2626,color:#fff
     style PASS fill:#14532d,stroke:#22c55e,color:#fff
     style J fill:#78350f,stroke:#f59e0b,color:#fff
 ```
 
-Everything after that point is relayed byte-for-byte, so your server behaves exactly as it always did.
+An unprotected name behaves exactly like vanilla offline mode — the gate only runs for names someone
+has actually opted into protecting. Everything past this point is relayed byte-for-byte, so your
+server behaves exactly as it always did.
 
 ---
 
