@@ -99,6 +99,7 @@ Everything is manageable from the app — you never have to edit JSON unless you
 | **Servers** | Which servers am I fronting, on which ports, with which protected usernames? |
 | **Security check** | Can anyone reach past me to the real server? |
 | **Protection** | What is the firewall holding off right now? Every defence layer, with switches. |
+| **Players** | Who has an account on each server, when did they register, and what is held against the address they use? Reset a password, forget their trusted addresses, lock a name to its Minecraft account, or remove them. |
 | **Blocked IPs** | Who is banned right now, and until when? Unban with one click. |
 | **Activity log** | What just happened? The service's own log, tailed live. |
 | **Settings** | Language, start-up behaviour, and the optional features that are off by default. |
@@ -389,7 +390,11 @@ nothing at all.
 | 🚦 **Rate limiting** | Separate sliding windows for server-list pings and login attempts. |
 | 💬 **Discord alerts** | Optional webhook for bans, new trusted IPs, and failed premium checks. |
 | 🖥️ **Multi-server** | One process in front of as many servers as you like, each on its own port. |
-| 🗣️ **Every message editable** | All player-facing text lives in config. English by default, Turkish example included. |
+| 🗣️ **Every message editable** | All player-facing text lives in config — the chat prompts and the on-screen title alike. English by default, Turkish example included. |
+| 👤 **Player management** | Per server: who registered and when, when they were last seen, from where, and the itemised reasons that address looks suspicious. Reset a password, forget trusted addresses, lock or unlock a name, remove it. |
+| 🧬 **Real player IPs** | PROXY protocol or BungeeCord-style forwarding, so your server log and your plugins see the player rather than 127.0.0.1. |
+| 🧱 **Malformed packet refusal** | What PacketFixer-style plugins do, a step earlier — before the server's own decoder sees the packet. |
+| 🔁 **Self-updating version support** | A Minecraft version this build has never seen is learned at runtime, checked against every table it already has, and used without anyone being asked to do anything. |
 
 ---
 
@@ -487,10 +492,72 @@ MinecraftFirewall.Admin.exe list-threats
 
 ---
 
+## Waiting at the login prompt
+
+When server-wide registration is on, a player who has not logged in yet is held. That used to mean
+their packets were refused and nothing else, which was correct and looked broken:
+
+- Minecraft predicts movement on the client and only corrects when the server disagrees, so a held
+  player walked around their own screen and then snapped back.
+- Their real coordinates sat on the HUD for anyone watching, before they had proved they owned the
+  name.
+- Mobs went on hitting them while they read the prompt, and they could die at it.
+- The prompt was one line of chat, which scrolls away while you are in your inventory.
+- The commands it told them to type rendered **red**, because the backend has never heard of them —
+  the firewall answers first.
+
+All of that is fixed. The client is now told where it is, repeatedly, at the origin rather than at
+the player's real position; put back exactly where the server has them the moment they log in; shown
+the prompt across the middle of the screen as well as in chat; and offered the premium route, which
+until now could only be found from the far side of the prompt asking for a password. The words work
+without a slash, so nothing renders as an error, and a player can change their own password in game
+with `changepassword <current> <new>` — the current one is required even from a trusted address,
+because a household shares an address.
+
+Damage is the one this cannot fix outright, and the reason is worth stating: a firewall in front of a
+server cannot stop a creeper. The player really is standing in the world and only the server decides
+their health. What it can do is notice — so a held player who starts taking damage is disconnected
+before they die. A kick costs them a reconnect; a death costs them their inventory.
+
+Every line of it is configurable, including the on-screen title.
+
+---
+
+## Real player IP addresses
+
+By default a reverse proxy hides everyone behind itself: your server log shows `127.0.0.1` for every
+join, and so does every plugin that reads an address. Banning an IP there bans the proxy, which is
+everyone.
+
+Set `IpForwarding` on a server profile (or pick it on the **Servers** page) to fix that:
+
+| Setting | What it does | Your server needs |
+|---|---|---|
+| `ProxyProtocol` | A small binary header before the first Minecraft byte. Knows nothing about Minecraft, so it does not move when the protocol does, and it covers the server-list ping too. | Paper: `proxies.proxy-protocol: true` in `config/paper-global.yml` |
+| `BungeeCord` | The real address spliced into the handshake, the way BungeeCord does it. | Spigot/Paper: `bungeecord: true` under `settings` in `spigot.yml` |
+
+Both need the server configured to expect the same thing, and **neither is safe on its own**: a server
+told to read a forwarded address believes whoever it is talking to. Keep the backend port bound to
+`127.0.0.1`, which is exactly what the Security check page tests.
+
+---
+
 ## Honest limitations
 
 This section is deliberately not marketing copy. Read it before relying on any of this.
 
+There is a longer, item-by-item version in **[docs/requested-features.md](docs/requested-features.md)**:
+every capability that has been asked of this project, marked as already present, added, feasible but
+not built, or not possible from where this software sits — with the reason in each case.
+
+- **A firewall in front of a server cannot stop mob damage.** A player held at the login prompt is
+  genuinely standing in your world, and only the server decides their health — nothing this proxy
+  refuses or rewrites changes that. It notices and disconnects them before they die, which is the
+  best a thing outside the server can do. If you want them not to be in the world at all, that needs
+  a plugin inside it.
+- **The anti-bot risk figures score an address, not a person.** One address carries several names, and
+  the Players page says so where it shows them. Nothing here correlates alt accounts; presenting an
+  address score as a player score would quietly imply that it did.
 - **This is defence in depth, not Mojang authentication.** It raises the cost of impersonation
   enormously; it does not make an offline-mode server equivalent to an online-mode one.
 - **Premium lock protects a name from the moment you enable it.** It cannot take back a name an
