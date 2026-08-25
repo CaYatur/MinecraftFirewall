@@ -47,18 +47,20 @@ public sealed class MessagesOptions
     /// <summary>Shown when a player types /premium — the explanation, and what confirming will do.
     /// Deliberately spells out that it is permanent, because it is.</summary>
     public string PremiumLockExplain { get; set; } =
-        "Locking your name means only your real Minecraft account can ever use it on this server, from any address, " +
-        "and you will never be asked for a password. This cannot be undone by you afterwards. " +
-        "To go ahead, type /premium confirm — you will be disconnected, and must rejoin using the genuine account.";
+        "&bLocking your name means &fonly your real Minecraft account&b can ever use it on this server, from any " +
+        "address, and you will never be asked for a password. &7This cannot be undone by you afterwards.&b " +
+        "To go ahead, type  &a&lpremium confirm&r&b  — you will be disconnected, and must rejoin using the " +
+        "genuine account.";
 
     /// <summary>Shown as the disconnect reason after /premium confirm.</summary>
     public string PremiumLockArmed { get; set; } =
-        "Ready. Rejoin now with the real Minecraft account that owns this name, and it will be locked to it. " +
-        "If you rejoin with anything else, nothing is recorded and you simply play as usual.";
+        "&aReady. &fRejoin now with the real Minecraft account that owns this name&a, and it will be locked to it. " +
+        "&7If you rejoin with anything else, nothing is recorded and you simply play as usual.";
 
     /// <summary>Shown once the claim has succeeded, on the connection that proved it.</summary>
     public string PremiumLockSucceeded { get; set; } =
-        "Your name is now locked to this Minecraft account. Nobody else can use it on this server.";
+        "&a&lYour name is now locked to this Minecraft account.&r&a Nobody else can use it on this server, " +
+        "and you will never be asked for a password here again.";
 
     // ---- server-wide registration (Identity.RequireRegistrationForEveryone) -----------------------
     // Sent into the player's chat while they are held still, so they are longer and more instructional

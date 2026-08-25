@@ -578,9 +578,15 @@ told to read a forwarded address believes whoever it is talking to. Keep the bac
 `127.0.0.1`, which is exactly what the Security check page tests.
 
 **The Servers page will configure your server for you.** Pick a mode, press *Set my server up for
-this*, and it finds the file, shows you the exact line it would change, and writes nothing until you
-approve that line. One line changes, the original is kept beside it, and the comments the file ships
-with are left alone.
+this*, and it finds the file, shows you the exact line(s) it would change, and writes nothing until
+you approve them. Only those lines change — the file is left byte-for-byte identical otherwise, line
+endings and comments included — and the original is kept beside it.
+
+**Only one of the two settings may be on**, and it sets the other one off in the same step. Leaving
+both on does not double anything: it makes your server announce to its plugins that it sits behind a
+BungeeCord network when it does not, and they believe it. SkinsRestorer switches into proxy mode and
+stops working, and it is not the only plugin that asks. If something that worked before stops working
+after you turn forwarding on, this is almost always why.
 
 **And if the two ever disagree, the firewall notices.** A server not configured to expect the
 forwarding data reads it as the first Minecraft packet, cannot decode it, and drops the connection —

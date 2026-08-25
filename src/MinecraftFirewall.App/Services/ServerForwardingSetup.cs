@@ -2,38 +2,58 @@ using System.IO;
 
 namespace MinecraftFirewall.App.Services;
 
+/// <summary>
+/// One line of one file that would change.
+///
+/// Identified by its index as well as its text. Searching for the text again at write time finds the
+/// FIRST line matching it, which is not necessarily the one that was planned — these key names are
+/// short and ordinary, and a file can easily hold the same line under a different parent. Planning
+/// inside the right block and then writing outside it is exactly the bug the block scoping exists to
+/// prevent, and it is how this was written the first time.
+/// </summary>
+public sealed record YamlEdit(string FilePath, string Key, int LineIndex, string CurrentLine, string ProposedLine)
+{
+    public string Describe() => $"{FilePath}{Environment.NewLine}    {CurrentLine.Trim()}  ->  {ProposedLine.Trim()}";
+}
+
 /// <summary>What would have to change in a server's own configuration for IP forwarding to work.</summary>
 public sealed record ForwardingSetupPlan(
     bool Possible,
-    string? FilePath,
-    string? Key,
     string? RecommendedMode,
-    bool AlreadyEnabled,
-    string? CurrentLine,
-    string? ProposedLine,
+    bool AlreadyCorrect,
+    IReadOnlyList<YamlEdit> Edits,
     string Explanation);
 
 /// <summary>
-/// Turns on the server's own half of IP forwarding.
+/// Turns on the server's own half of IP forwarding, and turns off the half that would conflict.
 ///
 /// Forwarding takes two settings that have to agree, on opposite sides of a boundary, and when they
 /// do not agree the failure is total: the server reads the forwarding data as the first Minecraft
-/// packet, cannot decode it, and drops every connection. That is why this exists — rather than a line
+/// packet, cannot decode it, and drops every connection. That is why this exists rather than a line
 /// in the documentation. Setting one side from the control panel and leaving somebody to find the
 /// other is how the mismatch happens.
 ///
 /// <para>
-/// Which setting depends on what the server is, and that is decided by which file exists rather than
-/// by asking: Paper keeps <c>proxies.proxy-protocol</c> in <c>config/paper-global.yml</c>, Spigot
-/// keeps <c>settings.bungeecord</c> in <c>spigot.yml</c>. A folder with neither is a vanilla server,
-/// and vanilla has no mechanism for this at all — which is worth saying as a finding rather than as
-/// a failure, because no amount of configuring will change it.
+/// There are two settings a server can have, and only one may be on. Paper keeps
+/// <c>proxies.proxy-protocol</c> in <c>config/paper-global.yml</c>; Spigot keeps
+/// <c>settings.bungeecord</c> in <c>spigot.yml</c>, and Paper honours that one too. Leaving both on
+/// does not double anything — it makes the server announce to its plugins that it sits behind a
+/// BungeeCord network when it does not, and they believe it. SkinsRestorer switches into proxy mode
+/// and stops working; anything else asking the same question does the same. So enabling one always
+/// disables the other, inside the same approval.
 /// </para>
 ///
 /// <para>
-/// The edit is line-oriented and touches exactly one line. A YAML round-trip would reformat the file
-/// and eat the comments Paper ships to explain its own settings — the same mistake this project has
-/// already made once, with a JSON round-trip, on the user's own configuration.
+/// A folder with neither file is a vanilla server, and vanilla has no mechanism for this at all — a
+/// finding worth stating rather than a failure to apologise for, because no amount of configuring
+/// changes it.
+/// </para>
+///
+/// <para>
+/// Edits are line-oriented and leave the file byte for byte identical apart from the values changed,
+/// line endings included. A YAML round-trip would reformat it and eat the comments it ships with —
+/// the same mistake this project already made once, with a JSON round-trip, on the user's own
+/// settings.
 /// </para>
 /// </summary>
 public sealed class ServerForwardingSetup
@@ -47,13 +67,14 @@ public sealed class ServerForwardingSetup
     private const string SpigotKey = "bungeecord";
 
     /// <summary>
-    /// Works out which setting this server needs, and what the line would become.
+    /// Works out what this server needs, and exactly which lines would change.
     ///
-    /// Nothing is written. The result is what the confirmation shows, and what it shows is the exact
-    /// file and the exact line, because approving "enable forwarding" is not the same as approving a
-    /// change to a file somebody else's software owns.
+    /// Nothing is written. The result is what the confirmation shows, and it shows every line, because
+    /// approving "set my server up" is not the same as approving edits to files somebody else's
+    /// software owns.
     /// </summary>
-    public ForwardingSetupPlan Plan(BackendServerInfo server, bool enable)
+    /// <param name="mode">"ProxyProtocol", "BungeeCord", or anything else meaning off.</param>
+    public ForwardingSetupPlan Plan(BackendServerInfo server, string mode)
     {
         if (server.Directory is not { } directory)
         {
@@ -66,97 +87,154 @@ public sealed class ServerForwardingSetup
         string paper = Path.Combine(directory, PaperFile.Replace('/', Path.DirectorySeparatorChar));
         string spigot = Path.Combine(directory, SpigotFile);
 
-        // Paper first: a Paper server has both files, and proxy protocol is the better of the two — it
-        // knows nothing about Minecraft's protocol, so it does not move when the game does, and it
-        // covers the server-list ping as well as joining.
-        if (File.Exists(paper))
-            return Read(paper, PaperParent, PaperKey, "ProxyProtocol", enable);
+        if (!File.Exists(paper) && !File.Exists(spigot))
+        {
+            return Impossible(
+                $"Neither {PaperFile} nor {SpigotFile} is in {directory}, which means this is a vanilla server. " +
+                "Vanilla has no way to be told a player's real address — it only ever sees the socket it is " +
+                "talking to, and there is no setting for it. Paper and Spigot both have one. Leave IP " +
+                "forwarding off here, or your server will refuse every connection.");
+        }
 
-        if (File.Exists(spigot))
-            return Read(spigot, SpigotParent, SpigotKey, "BungeeCord", enable);
+        bool wantProxyProtocol = mode == "ProxyProtocol";
+        bool wantBungee = mode == "BungeeCord";
 
-        return Impossible(
-            $"Neither {PaperFile} nor {SpigotFile} is in {directory}, which means this is a vanilla server. " +
-            "Vanilla has no way to be told a player's real address — it only ever sees the socket it is " +
-            "talking to, and there is no setting for it. Paper and Spigot both have one. Until then, leave " +
-            "IP forwarding off, or your server will refuse every connection.");
+        if (wantProxyProtocol && !File.Exists(paper))
+        {
+            return Impossible(
+                $"PROXY protocol needs Paper, and there is no {PaperFile} in {directory}. On Spigot, choose " +
+                "BungeeCord style instead.");
+        }
+
+        var edits = new List<YamlEdit>();
+        var problems = new List<string>();
+
+        // Both files every time, because only one of these may be on. Leaving the other set is what
+        // makes a server tell its plugins it is behind a BungeeCord network when it is not.
+        Consider(paper, PaperParent, PaperKey, wantProxyProtocol, edits, problems);
+        Consider(spigot, SpigotParent, SpigotKey, wantBungee, edits, problems);
+
+        if (problems.Count > 0 && edits.Count == 0)
+            return Impossible(string.Join(" ", problems));
+
+        string recommended = wantProxyProtocol ? "ProxyProtocol" : wantBungee ? "BungeeCord" : "None";
+
+        if (edits.Count == 0)
+        {
+            return new ForwardingSetupPlan(true, recommended, true, [],
+                "Your server is already set up correctly for this. Nothing needs changing.");
+        }
+
+        string detail = string.Join(Environment.NewLine, edits.Select(e => e.Describe()));
+        int files = edits.Select(e => e.FilePath).Distinct().Count();
+
+        return new ForwardingSetupPlan(true, recommended, false, edits,
+            edits.Count == 1
+                ? $"One line changes:{Environment.NewLine}{detail}"
+                : $"{edits.Count} lines change, in {files} file(s):{Environment.NewLine}{detail}");
     }
 
-    /// <summary>Applies the one-line change. Only ever called after a person has approved the exact
-    /// line in <see cref="ForwardingSetupPlan.ProposedLine"/>.</summary>
+    /// <summary>Applies every approved line. Only ever called after a person has seen them all.</summary>
     public (bool Success, string Message) Apply(ForwardingSetupPlan plan)
     {
-        if (!plan.Possible || plan.FilePath is not { } path || plan.ProposedLine is not { } proposed)
+        if (!plan.Possible)
             return (false, plan.Explanation);
 
+        if (plan.AlreadyCorrect)
+            return (true, plan.Explanation);
+
+        var done = new List<string>();
+
+        foreach (YamlEdit edit in plan.Edits)
+        {
+            (bool ok, string message) = ApplyOne(edit);
+            if (!ok)
+                return (false, message);
+
+            done.Add($"{Path.GetFileName(edit.FilePath)}: {edit.Key}");
+        }
+
+        return (true,
+            $"Set {string.Join(", ", done)}. Restart your Minecraft server for it to take effect — until then " +
+            "it keeps the old settings, so leave IP forwarding off here until you have. Each file's previous " +
+            "version is beside it as .mcfirewall-backup.");
+    }
+
+    private static (bool Success, string Message) ApplyOne(YamlEdit edit)
+    {
         try
         {
             // Read and written as raw text, split on newlines only. ReadAllLines/WriteAllLines would
-            // rewrite every line ending in the file to this machine's — Paper writes LF, Windows
-            // writes CRLF — so a change of one value would show up as a change to all 144 lines. The
-            // file parses either way, but "one line changes" has to actually be true, and a diff full
-            // of noise is a diff nobody reads.
-            string original = File.ReadAllText(path);
-            string[] lines = original.Split('\n');
+            // rewrite every line ending in the file to this machine's — Paper writes LF, Windows writes
+            // CRLF — so changing one value would show up as a change to every line. The file parses
+            // either way, but "one line changes" has to be true, and a diff full of noise is a diff
+            // nobody reads.
+            string[] lines = File.ReadAllText(edit.FilePath).Split('\n');
 
-            int index = FindKeyLine(lines, ParentOf(path), KeyOf(path));
+            // The planned line, at the planned place, still saying what it said. Anything else
+            // means the file moved between showing somebody the change and making it, and writing
+            // then would be writing something nobody agreed to.
+            if (edit.LineIndex >= lines.Length || lines[edit.LineIndex].TrimEnd('\r') != edit.CurrentLine)
+                return (false, $"{edit.FilePath} changed since this was worked out. Nothing was written — try again.");
 
-            if (index < 0)
-                return (false, $"Could not find where to put {KeyOf(path)} in {path}. Set it by hand.");
+            int index = edit.LineIndex;
 
-            // One backup, beside the file, so a person who does not like the result can put it back
-            // without needing this application to do it for them.
-            File.Copy(path, path + ".mcfirewall-backup", overwrite: true);
+            File.Copy(edit.FilePath, edit.FilePath + ".mcfirewall-backup", overwrite: true);
 
             // Whatever this particular line ended with, it still ends with.
-            lines[index] = lines[index].EndsWith('\r') ? proposed + "\r" : proposed;
-            File.WriteAllText(path, string.Join('\n', lines));
+            lines[index] = lines[index].EndsWith('\r') ? edit.ProposedLine + "\r" : edit.ProposedLine;
+            File.WriteAllText(edit.FilePath, string.Join('\n', lines));
 
-            return (true,
-                $"Set in {path}. Restart your Minecraft server for it to take effect — until then it keeps " +
-                "the old setting, so leave IP forwarding off here until you have. The previous file is beside " +
-                "it as .mcfirewall-backup.");
+            return (true, "");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return (false,
-                $"Could not write {path}: {ex.Message}. If the server runs as another user, set " +
-                $"{KeyOf(path)} there by hand.");
+                $"Could not write {edit.FilePath}: {ex.Message}. If the server runs as another user, set " +
+                $"{edit.Key} there by hand.");
         }
     }
 
-    private static ForwardingSetupPlan Read(string path, string parent, string key, string mode, bool enable)
+    /// <summary>Adds an edit for one file's key, if the file has it and it is not already right.</summary>
+    private static void Consider(string path, string parent, string key, bool enable,
+        List<YamlEdit> edits, List<string> problems)
     {
+        if (!File.Exists(path))
+            return;
+
         string[] lines;
         try
         {
-            // Split the same way the write does, so the plan and the edit agree on what a line is.
             lines = File.ReadAllText(path).Split('\n');
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return Impossible($"Could not read {path}: {ex.Message}");
+            problems.Add($"Could not read {path}: {ex.Message}");
+            return;
         }
 
         int index = FindKeyLine(lines, parent, key);
-
         if (index < 0)
         {
-            return new ForwardingSetupPlan(false, path, key, mode, false, null, null,
-                $"{path} has no {key} under {parent}. That is unusual enough to be worth looking at by hand " +
-                "rather than having this application guess where to add it.");
+            // Only worth complaining about for the key being turned ON. A file that never had the
+            // other one cannot have it set wrongly.
+            if (enable)
+            {
+                problems.Add($"{path} has no {key} under {parent}, which is unusual enough to be worth looking " +
+                             "at by hand rather than having this application guess where to add it.");
+            }
+
+            return;
         }
 
         string current = lines[index].TrimEnd('\r');
-        bool alreadyEnabled = current.TrimEnd().EndsWith("true", StringComparison.OrdinalIgnoreCase);
+        bool currentlyOn = current.TrimEnd().EndsWith("true", StringComparison.OrdinalIgnoreCase);
+
+        if (currentlyOn == enable)
+            return;
 
         string indent = current[..(current.Length - current.TrimStart().Length)];
-        string proposed = $"{indent}{key}: {(enable ? "true" : "false")}";
-
-        return new ForwardingSetupPlan(true, path, key, mode, alreadyEnabled, current, proposed,
-            alreadyEnabled == enable
-                ? $"{key} in {path} is already {(enable ? "true" : "false")}. Nothing needs changing."
-                : $"One line in {path} changes:{Environment.NewLine}{current.Trim()}  ->  {proposed.Trim()}");
+        edits.Add(new YamlEdit(path, key, index, current, $"{indent}{key}: {(enable ? "true" : "false")}"));
     }
 
     /// <summary>
@@ -168,13 +246,13 @@ public sealed class ServerForwardingSetup
     /// </summary>
     private static int FindKeyLine(string[] lines, string parent, string key)
     {
-        int start = Array.FindIndex(lines, line => line.TrimEnd() == parent + ":");
+        int start = Array.FindIndex(lines, line => line.TrimEnd('\r').TrimEnd() == parent + ":");
         if (start < 0)
             return -1;
 
         for (int i = start + 1; i < lines.Length; i++)
         {
-            string line = lines[i];
+            string line = lines[i].TrimEnd('\r');
 
             if (line.Trim().Length == 0)
                 continue;
@@ -194,12 +272,6 @@ public sealed class ServerForwardingSetup
         return -1;
     }
 
-    private static string ParentOf(string path) =>
-        path.EndsWith(SpigotFile, StringComparison.OrdinalIgnoreCase) ? SpigotParent : PaperParent;
-
-    private static string KeyOf(string path) =>
-        path.EndsWith(SpigotFile, StringComparison.OrdinalIgnoreCase) ? SpigotKey : PaperKey;
-
     private static ForwardingSetupPlan Impossible(string explanation) =>
-        new(false, null, null, null, false, null, null, explanation);
+        new(false, null, false, [], explanation);
 }

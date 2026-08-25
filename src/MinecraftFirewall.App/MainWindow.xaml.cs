@@ -1129,10 +1129,8 @@ public partial class MainWindow : Window
         if (((Button)sender).Tag is not ServerRow row)
             return;
 
-        bool enable = row.IpForwarding != "None";
-
         BackendServerInfo server = new BackendServerInspector().Inspect(row.BackendPort);
-        ForwardingSetupPlan plan = new ServerForwardingSetup().Plan(server, enable);
+        ForwardingSetupPlan plan = new ServerForwardingSetup().Plan(server, row.IpForwarding);
 
         if (!plan.Possible)
         {
@@ -1142,7 +1140,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (plan.AlreadyEnabled == enable)
+        if (plan.AlreadyCorrect)
         {
             Toast(plan.Explanation, ok: true);
             return;

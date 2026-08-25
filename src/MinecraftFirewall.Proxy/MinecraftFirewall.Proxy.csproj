@@ -7,7 +7,7 @@
     <UserSecretsId>dotnet-MinecraftFirewall.Proxy-9f014f1c-4ab9-48c3-973a-bdb37bbd2f1e</UserSecretsId>
     <InvariantGlobalization>true</InvariantGlobalization>
     <RootNamespace>MinecraftFirewall.Proxy</RootNamespace>
-    <Version>1.7.3</Version>
+    <Version>1.7.4</Version>
     <Product>MinecraftFirewall</Product>
   </PropertyGroup>
 

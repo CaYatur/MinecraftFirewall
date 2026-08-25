@@ -255,6 +255,16 @@ public static class ClientConnection
         AesCfb8Stream? cipherStream = null;
         bool claimRequestedByPlayer = false;
 
+        // Taken from the decision, but able to be dropped by what happens below.
+        //
+        // The decision is made before the premium challenge runs, so on the connection where somebody
+        // finally proves they own a name, it still says "ask them to register". That is the wrong way
+        // round: an account that has just answered Mojang's challenge has proved something strictly
+        // stronger than a password, and this project's one promise is that the genuine owner is never
+        // shown a password prompt. Without this they were — once, on the very join that locked their
+        // name to them.
+        GraceAuthRequirement? graceAuth = decision.GraceAuth;
+
         // Declared out here so the catch below can see it. Whether the backend ever spoke Minecraft to
         // us is the one thing that separates "the server refused what we sent it" from every ordinary
         // way a connection ends.
@@ -297,6 +307,15 @@ public static class ClientConnection
                     clientIo = cipherStream;
             }
 
+            // Re-read after the challenge, because the challenge may have just changed the answer. A
+            // name that is now locked to the account holding this connection needs no password.
+            if (graceAuth is not null && profile.IdentityStore.Find(username)?.PremiumRequired == true)
+            {
+                logger.LogInformation("[{Profile}] '{Username}' proved ownership of this name, so they are not " +
+                                      "being asked to register.", profile.Name, username);
+                graceAuth = null;
+            }
+
             var (backendClient, backendStream) = await TryConnectBackendAsync(profile, client, logger, hostShutdown).ConfigureAwait(false);
             if (backendClient is null || backendStream is null)
                 return;
@@ -329,8 +348,8 @@ public static class ClientConnection
                 var authHold = new AuthHold();
 
                 var inspector = new PlayStateInspector(
-                    profile, username, remoteAddress, packetIds, decision.GraceAuth,
-                    startsTrusted: decision.GraceAuth is null,
+                    profile, username, remoteAddress, packetIds, graceAuth,
+                    startsTrusted: graceAuth is null,
                     identityOptions, dangerousCommands, messages, policyEngine, inspection, logger,
                     authHold, compressionState)
                 {
@@ -343,7 +362,7 @@ public static class ClientConnection
                     // The hold is only watched for while somebody is actually being held; the login
                     // phase is always read, because the threshold it carries is needed either way.
                     // Once there is nothing left to learn the relay becomes a plain byte copy.
-                    decision.GraceAuth is not null ? authHold : null,
+                    graceAuth is not null ? authHold : null,
                     compressionState, inspection, hostShutdown).ConfigureAwait(false);
 
                 // After the session, not during it. What the model learns from is the shape of a whole
