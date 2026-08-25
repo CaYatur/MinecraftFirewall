@@ -267,8 +267,10 @@
   the primary X4BNet list is checked first, skipping the ipinfo call entirely when it already decided
   the outcome.
 
-**All four planned stages are now complete.** What remains is not stage work — it is three gaps that
-were designed for in this document but never built, plus one honest verification limit:
+**All four planned stages are complete, and so are the three gaps this document had designed for but
+never built** (items 1–3 below, all finished after Stage 4b). What is genuinely left is not code — it
+is two things this build environment could not verify, listed as items 4 and 5 so they aren't
+mistaken for "tested and fine":
 
 1. ~~**Identity-store persistence**~~ — **done** (`Identity/Persistence/`). Runtime-learned state now
    survives restarts: self-registered CaYaDev-Check password hashes, learned IPs, and premium UUID
@@ -355,6 +357,11 @@ were designed for in this document but never built, plus one honest verification
    logic is unit-tested and the crypto is NIST-verified, but that specific end-to-end assertion is
    honestly outstanding — anyone with a real account can check it in minutes by marking their own
    username `RequirePremium` and connecting with a normal launcher.
+5. **The real Windows Firewall COM path has not been exercised** — creating rules needs elevation and
+   this environment is confirmed non-elevated. Ban logic including the restart-adoption path is tested
+   against the fake gateway, but `FirewallWASRule.Description` round-tripping through `INetFwPolicy2`
+   is assumed, not observed. One manual check from an elevated prompt settles it: trigger a ban,
+   restart, and confirm the log reports adopting the existing ban.
 
 ## Context
 
