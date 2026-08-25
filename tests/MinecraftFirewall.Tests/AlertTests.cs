@@ -175,6 +175,7 @@ public class PolicyEngineAlertTests
             new FakeIpInfoClient(),
             alerts,
             DefenseTestFactory.CreateThreatIntelligence(),
+            DefenseTestFactory.CreateScannerDetector(),
             banOptions,
             Options.Create(new IpInfoOptions()),
             Options.Create(new DdosOptions()),

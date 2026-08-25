@@ -37,4 +37,20 @@ public sealed class MessagesOptions
     /// hitting a Mojang outage, since anyone else has no legitimate reason to be here.</summary>
     public string PremiumVerificationFailed { get; set; } =
         "This username is reserved for its verified Minecraft account owner. Sign in with the genuine account and try again.";
+
+    /// <summary>Shown when a player types /premium — the explanation, and what confirming will do.
+    /// Deliberately spells out that it is permanent, because it is.</summary>
+    public string PremiumLockExplain { get; set; } =
+        "Locking your name means only your real Minecraft account can ever use it on this server, from any address, " +
+        "and you will never be asked for a password. This cannot be undone by you afterwards. " +
+        "To go ahead, type /premium confirm — you will be disconnected, and must rejoin using the genuine account.";
+
+    /// <summary>Shown as the disconnect reason after /premium confirm.</summary>
+    public string PremiumLockArmed { get; set; } =
+        "Ready. Rejoin now with the real Minecraft account that owns this name, and it will be locked to it. " +
+        "If you rejoin with anything else, nothing is recorded and you simply play as usual.";
+
+    /// <summary>Shown once the claim has succeeded, on the connection that proved it.</summary>
+    public string PremiumLockSucceeded { get; set; } =
+        "Your name is now locked to this Minecraft account. Nobody else can use it on this server.";
 }

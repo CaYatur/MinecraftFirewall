@@ -68,7 +68,7 @@ public class DeepInspectionPipelineTests
             gateway, alerts, NullLogger<FirewallBanService>.Instance);
 
         var policy = new PolicyEngine(new VpnIntelligence(), new ConnectionRateLimiter(Options.Create(new RateLimitOptions())),
-            banService, new StrikeTracker(), new FakeIpInfoClient(), alerts, DefenseTestFactory.CreateThreatIntelligence(),
+            banService, new StrikeTracker(), new FakeIpInfoClient(), alerts, DefenseTestFactory.CreateThreatIntelligence(), DefenseTestFactory.CreateScannerDetector(),
             banOptions, Options.Create(new IpInfoOptions()), Options.Create(new DdosOptions()),
             Options.Create(new BotDefenseOptions()), NullLogger<PolicyEngine>.Instance);
 

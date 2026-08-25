@@ -25,6 +25,17 @@ public sealed class IdentityEntry
     // "explicitly rejected" note on auto-probing).
     public bool PremiumRequired { get; set; }
 
+    /// <summary>
+    /// Set when the player holding this name has asked, and confirmed, that it be locked to their
+    /// Microsoft account. The next connection using the name is challenged once, whether or not
+    /// auto-claim is switched on for the server.
+    ///
+    /// Deliberately not persisted across restarts. It is a short-lived intent rather than a setting,
+    /// and losing it costs one repeated command — whereas an armed request surviving a restart could
+    /// be waiting days later for a connection the player never made.
+    /// </summary>
+    public PremiumClaimRequest? PremiumClaimRequested { get; set; }
+
     /// <summary>The Mojang UUID this username is permanently locked to, recorded on the first
     /// successful premium verification. Mutated only via <see cref="TryClaimOrMatchPinnedUuid"/> —
     /// see there for why an ordinary setter would be a real vulnerability.</summary>

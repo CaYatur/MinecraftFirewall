@@ -59,6 +59,7 @@ builder.Services.AddSingleton<VpnIntelligence>();
 builder.Services.AddSingleton<ThreatIntelligence>();
 builder.Services.AddSingleton<ConnectionGovernor>();
 builder.Services.AddSingleton<BotDetector>();
+builder.Services.AddSingleton<ScannerDetector>();
 builder.Services.AddSingleton<AnomalyDetector>();
 builder.Services.AddSingleton<IIpInfoClient, IpInfoClient>();
 

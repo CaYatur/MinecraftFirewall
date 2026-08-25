@@ -56,6 +56,18 @@ public sealed class PlayStateInspector(
     private bool _reportedLayoutProblem;
     private bool _reportedAttackRate;
 
+    /// <summary>
+    /// Set when this connection is the one that just proved ownership of a name the player asked to
+    /// lock. Delivered once they reach Play state, because that is the first moment there is a chat box
+    /// to deliver it to — the challenge itself happens during login, where nothing can be said.
+    /// </summary>
+    public bool AnnouncePremiumLockSucceeded { get; set; }
+
+    /// <summary>Where the proxy writes when it speaks to the player without ending the connection.
+    /// Set for the duration of RunAsync; the stream it points at serializes writes, because the pump
+    /// carrying the backend's replies is writing to the same socket at the same time.</summary>
+    private Stream? _clientWriter;
+
     // Session tallies, kept for the anomaly baseline. Deliberately counted here rather than in the
     // analyser: this is the one place every serverbound packet passes through exactly once.
     private readonly HashSet<int> _packetKinds = [];
@@ -110,6 +122,7 @@ public sealed class PlayStateInspector(
     public async Task RunAsync(Stream clientStream, Stream backendStream, CancellationToken ct)
     {
         _startedAt = _now();
+        _clientWriter = clientStream;
 
         while (!ct.IsCancellationRequested)
         {
@@ -183,7 +196,15 @@ public sealed class PlayStateInspector(
                 }
 
                 if (packet.PacketId == packetIds.ConfigurationFinishConfigurationServerbound && packet.Fields.Length == 0)
+                {
                     _inPlayState = true;
+
+                    if (AnnouncePremiumLockSucceeded)
+                    {
+                        AnnouncePremiumLockSucceeded = false;
+                        SendToPlayer(messages.PremiumLockSucceeded);
+                    }
+                }
 
                 await backendStream.WriteAsync(packet.RawFrame, ct).ConfigureAwait(false);
                 continue;
@@ -294,6 +315,18 @@ public sealed class PlayStateInspector(
                 entry.LearnIp(remoteAddress, identityOptions.LearnedIpTtl, identityOptions.MaxLearnedIpsPerUsername);
                 _isTrusted = true;
                 logger.LogInformation("[{Profile}] '{Username}' registered with CaYaDev-Check from {Ip}.", profile.Name, username, remoteAddress);
+                return true;
+
+            case CayaDevCheckCommandKind.PremiumLockAsk:
+                // Answered rather than acted on. Locking a name is permanent and the next step is a
+                // disconnect, so the player gets told what both of those mean before either happens.
+                logger.LogInformation("[{Profile}] '{Username}' asked about locking their name to a Minecraft account.",
+                    profile.Name, username);
+                SendToPlayer(messages.PremiumLockExplain);
+                return true;
+
+            case CayaDevCheckCommandKind.PremiumLockConfirm:
+                ArmPremiumClaim();
                 return true;
 
             case CayaDevCheckCommandKind.Login:
@@ -540,6 +573,60 @@ public sealed class PlayStateInspector(
             }
 
             return ++_count;
+        }
+    }
+
+    /// <summary>
+    /// Arms the player's own request to lock this name, and disconnects them so they can come back
+    /// with the account that owns it.
+    ///
+    /// The disconnect is the mechanism, not a punishment: the encryption challenge that proves account
+    /// ownership happens during login, so there is no way to run it on a connection that is already
+    /// past that point. Saying so plainly in the kick message is the difference between an instruction
+    /// and an apparent failure.
+    /// </summary>
+    private void ArmPremiumClaim()
+    {
+        IdentityEntry entry = profile.IdentityStore.GetOrCreate(username);
+
+        if (entry.PremiumRequired)
+        {
+            // Already locked. Worth answering rather than silently arming a claim that would change
+            // nothing — and worth not disconnecting them over.
+            SendToPlayer(messages.PremiumLockSucceeded);
+            return;
+        }
+
+        entry.PremiumClaimRequested = new PremiumClaimRequest(_now());
+
+        logger.LogInformation("[{Profile}] '{Username}' ({Ip}) asked for their name to be locked to their Minecraft " +
+                              "account. The next login with this name will be challenged once.",
+            profile.Name, username, remoteAddress);
+
+        DisconnectReason = messages.PremiumLockArmed;
+    }
+
+    /// <summary>
+    /// Says something to the player without ending their connection.
+    ///
+    /// Best-effort and fire-and-forget: this is only ever used for the premium self-lock conversation,
+    /// and a failure to deliver an explanatory message must not disturb a connection that is otherwise
+    /// working. Nothing security-relevant depends on it arriving.
+    /// </summary>
+    private void SendToPlayer(string text)
+    {
+        Stream? writer = _clientWriter;
+        if (writer is null)
+            return;
+
+        try
+        {
+            byte[] frame = FrameWriter.WriteSystemChatFrame(packetIds.PlaySystemChatClientbound, text);
+            writer.WriteAsync(frame).AsTask().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "[{Profile}] could not deliver a message to '{Username}'.", profile.Name, username);
         }
     }
 

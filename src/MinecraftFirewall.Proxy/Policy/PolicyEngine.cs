@@ -39,6 +39,7 @@ public sealed class PolicyEngine(
     IIpInfoClient ipInfoClient,
     IAlertSender alerts,
     ThreatIntelligence threatIntelligence,
+    ScannerDetector scannerDetector,
     IOptions<FirewallBanOptions> banOptions,
     IOptions<IpInfoOptions> ipInfoOptions,
     IOptions<DdosOptions> ddosOptions,
@@ -68,6 +69,26 @@ public sealed class PolicyEngine(
             return new PolicyDecision(true, "OK");
 
         string logged = HostnameMatcher.TruncateForLogging(serverAddress);
+        string normalized = HostnameMatcher.Normalize(serverAddress);
+        HostnameMismatchKind kind = ScannerDetector.Classify(normalized);
+
+        // A crawler announces its own domain in the field meant for this server's name, and does it
+        // every sweep. Once it has done so often enough, an ordinary six-hour ban is pointless: it will
+        // be back on schedule. A raw IP in that field is a different matter entirely — that is what the
+        // admin's own test connection looks like — so it never escalates.
+        if (scannerDetector.RecordMismatch(remoteAddress, normalized, kind, DateTimeOffset.UtcNow) is { } banFor)
+        {
+            banService.Ban(remoteAddress, $"[{profile.Name}] server-indexing crawler: repeatedly announced hostnames this server does not serve", banFor);
+            threatIntelligence.RecordLocalHit(remoteAddress, $"crawler announcing '{logged}'", DateTimeOffset.UtcNow);
+            strikeTracker.Reset(remoteAddress);
+
+            alerts.Send(AlertKind.Ban,
+                $"🔎 **Crawler blocked** on `{AlertText.Field(profile.Name)}`\n" +
+                $"`{AlertText.Field(remoteAddress.ToString())}` kept connecting under `{AlertText.Field(logged)}` — banned for {banFor.TotalDays:0} days.");
+
+            return new PolicyDecision(false, "Address is a server-indexing crawler.");
+        }
+
         RegisterStrikeAndMaybeBan(remoteAddress, $"[{profile.Name}] connection via disallowed hostname '{logged}'");
         return new PolicyDecision(false, $"Hostname '{logged}' is not in this server's allowed-domains list.");
     }

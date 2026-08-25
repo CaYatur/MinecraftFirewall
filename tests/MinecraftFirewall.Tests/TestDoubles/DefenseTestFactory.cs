@@ -30,6 +30,9 @@ public static class DefenseTestFactory
     public static AnomalyDetector CreateAnomalyDetector(AnomalyOptions? options = null) =>
         new(Options.Create(options ?? new AnomalyOptions()), NullLogger<AnomalyDetector>.Instance);
 
+    public static ScannerDetector CreateScannerDetector(BotDefenseOptions? options = null) =>
+        new(Options.Create(options ?? new BotDefenseOptions()), NullLogger<ScannerDetector>.Instance);
+
     public static BotDetector CreateBotDetector(BotDefenseOptions? options = null, ThreatIntelligence? threats = null) =>
         new(Options.Create(options ?? new BotDefenseOptions()), threats ?? CreateThreatIntelligence());
 }

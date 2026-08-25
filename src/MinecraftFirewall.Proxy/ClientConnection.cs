@@ -220,6 +220,7 @@ public static class ClientConnection
         // premium connection is the cipher wrapper rather than the bare socket stream.
         Stream clientIo = clientStream;
         AesCfb8Stream? cipherStream = null;
+        bool claimRequestedByPlayer = false;
 
         try
         {
@@ -232,6 +233,18 @@ public static class ClientConnection
                     return; // denied — RunPremiumChallengeAsync already logged, kicked, and struck
 
                 clientIo = cipherStream;
+            }
+            else if (hasPacketIds && HasLivePremiumClaimRequest(profile, username))
+            {
+                claimRequestedByPlayer = true;
+                // The player asked for this themselves, so it runs whether or not the server has
+                // auto-claim switched on — that setting decides whether *everyone* is offered the
+                // challenge, which is a different question from whether this one person asked for it.
+                cipherStream = await TryAutoClaimAsync(clientStream, profile, remoteAddress, username, premiumHandshake, logger, hostShutdown)
+                    .ConfigureAwait(false);
+
+                if (cipherStream is not null)
+                    clientIo = cipherStream;
             }
             else if (premiumHandshake.AutoClaimEnabled && hasPacketIds)
             {
@@ -253,6 +266,13 @@ public static class ClientConnection
             using var _ = backendClient;
             logger.LogInformation("[{Profile}] login allowed for '{Username}' from {Ip}.", profile.Name, username, remoteAddress);
 
+            // From here the client socket has two writers: the pump carrying the backend's replies, and
+            // the inspector when the premium self-lock flow speaks to the player. Minecraft's wire
+            // format is length-prefixed frames, so an interleaved write produces a frame whose declared
+            // length does not match its contents and the client disconnects with a decode error nobody
+            // can explain. Both go through the same serializing wrapper.
+            clientIo = new SynchronizedWriteStream(clientIo);
+
             await backendStream.WriteAsync(handshakeFrame.Raw, hostShutdown).ConfigureAwait(false);
             await backendStream.WriteAsync(loginStartFrame.Raw, hostShutdown).ConfigureAwait(false);
 
@@ -261,7 +281,12 @@ public static class ClientConnection
                 var inspector = new PlayStateInspector(
                     profile, username, remoteAddress, packetIds, decision.GraceAuth,
                     startsTrusted: decision.GraceAuth is null,
-                    identityOptions, dangerousCommands, messages, policyEngine, inspection, logger);
+                    identityOptions, dangerousCommands, messages, policyEngine, inspection, logger)
+                {
+                    // Only when the player asked for it and the challenge actually pinned the name.
+                    // Announcing it for an ordinary auto-claim would be confusing: nobody asked.
+                    AnnouncePremiumLockSucceeded = claimRequestedByPlayer && profile.IdentityStore.Find(username)?.PremiumRequired == true,
+                };
 
                 await PumpWithInspectionAsync(client, clientIo, backendStream, inspector, packetIds, hostShutdown).ConfigureAwait(false);
 
@@ -277,8 +302,9 @@ public static class ClientConnection
         }
         finally
         {
-            // leaveInnerOpen: true, so this releases the cipher state only — the socket's lifetime
-            // still belongs to the caller's `using` on the TcpClient.
+            // Both leave their inner stream open, so this releases the cipher state and the write lock
+            // only — the socket's lifetime still belongs to the caller's `using` on the TcpClient.
+            (clientIo as SynchronizedWriteStream)?.Dispose();
             cipherStream?.Dispose();
         }
     }
@@ -424,6 +450,23 @@ public static class ClientConnection
         // under — closing the socket is the only honest option.
 
         return null;
+    }
+
+    /// <summary>
+    /// Whether this username has a live, player-initiated request to be locked to a Microsoft account.
+    ///
+    /// Reading it clears it, whatever happens next. The request is a single-use intent: if the person
+    /// who armed it connects with a cracked client, the challenge fails, nothing is recorded, and the
+    /// request must not sit there waiting to fire again on somebody else's connection.
+    /// </summary>
+    private static bool HasLivePremiumClaimRequest(ServerProfile profile, string username)
+    {
+        IdentityEntry? entry = profile.IdentityStore.Find(username);
+        if (entry?.PremiumClaimRequested is not { } request)
+            return false;
+
+        entry.PremiumClaimRequested = null;
+        return request.IsLive(DateTimeOffset.UtcNow);
     }
 
     private static async Task<(TcpClient? Client, NetworkStream? Stream)> TryConnectBackendAsync(

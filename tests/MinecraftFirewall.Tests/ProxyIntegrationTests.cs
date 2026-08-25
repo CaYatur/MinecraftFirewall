@@ -68,7 +68,7 @@ public class ProxyIntegrationTests : IAsyncLifetime
         var strikeTracker = new StrikeTracker();
 
         _policyEngine = new PolicyEngine(vpnIntel, rateLimiter, _banService, strikeTracker, new FakeIpInfoClient(), new RecordingAlertSender(),
-            DefenseTestFactory.CreateThreatIntelligence(), banOptions, Options.Create(new IpInfoOptions()),
+            DefenseTestFactory.CreateThreatIntelligence(), DefenseTestFactory.CreateScannerDetector(), banOptions, Options.Create(new IpInfoOptions()),
             Options.Create(new DdosOptions()), Options.Create(new BotDefenseOptions()), NullLogger<PolicyEngine>.Instance);
 
         var identityOptions = new IdentityOptions();

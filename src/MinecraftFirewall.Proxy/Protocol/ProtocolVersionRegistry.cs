@@ -16,7 +16,8 @@ public sealed record PlayStatePacketIds(
     int PlayInteractServerbound,
     int PlaySwingServerbound,
     int PlaySignUpdateServerbound,
-    int PlayEditBookServerbound)
+    int PlayEditBookServerbound,
+    int PlaySystemChatClientbound)
 {
     /// <summary>True for any of the four serverbound movement packets — the ones carrying coordinates
     /// a malformed or hostile client can use to upset a server, and the ones a movement cheat has to
@@ -66,7 +67,8 @@ public static class ProtocolVersionRegistry
             PlayInteractServerbound: 0x19,
             PlaySwingServerbound: 0x3C,
             PlaySignUpdateServerbound: 0x3B,
-            PlayEditBookServerbound: 0x17),
+            PlayEditBookServerbound: 0x17,
+            PlaySystemChatClientbound: 0x77),
     };
 
     public static bool TryGet(int protocolVersion, out PlayStatePacketIds ids) =>

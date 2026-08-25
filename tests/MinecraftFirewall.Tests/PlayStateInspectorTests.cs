@@ -42,7 +42,7 @@ public class PlayStateInspectorTests
         var banService = new FirewallBanService(banOptions, neverBanList, gateway, new RecordingAlertSender(), NullLogger<FirewallBanService>.Instance);
         var strikeTracker = new StrikeTracker();
         var policyEngine = new PolicyEngine(vpnIntel, rateLimiter, banService, strikeTracker, new FakeIpInfoClient(), new RecordingAlertSender(),
-            DefenseTestFactory.CreateThreatIntelligence(), banOptions, Options.Create(new IpInfoOptions()),
+            DefenseTestFactory.CreateThreatIntelligence(), DefenseTestFactory.CreateScannerDetector(), banOptions, Options.Create(new IpInfoOptions()),
             Options.Create(new DdosOptions()), Options.Create(new BotDefenseOptions()), NullLogger<PolicyEngine>.Instance);
         return new Fixture(profile, policyEngine, gateway, banService);
     }

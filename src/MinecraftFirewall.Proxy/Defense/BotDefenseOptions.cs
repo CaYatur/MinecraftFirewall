@@ -110,6 +110,34 @@ public sealed class BotDefenseOptions
     /// port scan rather than a player.</summary>
     public int WeightScannerBehaviour { get; set; } = 30;
 
+    // ---- server-indexing crawlers ----------------------------------------------------------------
+    // These only apply to a profile that declares AllowedHostnames, since without a list nothing is a
+    // mismatch. A crawler sweeping address ranges has no address to put in the Handshake packet, so it
+    // sends its own domain — its brand, in the field meant for the server's name. That is a far
+    // cleaner signal than anything else here, and it comes from the crawler itself.
+
+    /// <summary>
+    /// Foreign domains an address may announce before it is banned as a crawler.
+    ///
+    /// Counts distinct names inside <see cref="ScannerMemory"/>, not attempts, and only names that are
+    /// not IP addresses. A raw IP in that field is what the admin's own test connection looks like and
+    /// never escalates — it earns an ordinary strike like any other refusal.
+    /// </summary>
+    public int ScannerMismatchesBeforeBan { get; set; } = 3;
+
+    /// <summary>
+    /// How long a recognised crawler is banned for.
+    ///
+    /// Much longer than an ordinary ban, because the behaviour is not a mistake somebody might stop
+    /// making: an indexing service is on a schedule and will be back next week regardless. Long enough
+    /// to be worth the crawler dropping the entry, short enough that a wrongly-classified address is
+    /// not blocked forever.
+    /// </summary>
+    public TimeSpan ScannerBanDuration { get; set; } = TimeSpan.FromDays(30);
+
+    /// <summary>Window over which the distinct names are counted.</summary>
+    public TimeSpan ScannerMemory { get; set; } = TimeSpan.FromDays(7);
+
     /// <summary>A protocol version no released Minecraft client uses. Custom clients do exist, so
     /// this is a nudge rather than a verdict.</summary>
     public int WeightImplausibleProtocol { get; set; } = 25;

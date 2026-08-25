@@ -22,4 +22,16 @@ public static class FrameWriter
         byte[] payload = [.. VarInt.Encode(0), .. inner];
         return [.. VarInt.Encode(payload.Length), .. payload];
     }
+
+    /// <summary>
+    /// A clientbound System Chat message: an NBT text component followed by an "overlay" boolean.
+    /// False puts it in the chat box rather than across the action bar, which is where a message the
+    /// player is expected to read and act on belongs.
+    ///
+    /// This is the only thing the proxy ever says to a player without ending their connection. It
+    /// exists for the premium self-lock flow, where kicking somebody for asking a question would be an
+    /// odd way to answer it.
+    /// </summary>
+    public static byte[] WriteSystemChatFrame(int packetId, string text) =>
+        WriteCompressedFrameUncompressedPayload(packetId, [.. NbtTextComponent.BuildLiteral(text), 0x00]);
 }
