@@ -184,6 +184,100 @@ public class IpForwardingIntegrationTests : IAsyncLifetime
         await cts.CancelAsync();
     }
 
+    [Fact]
+    public async Task ForwardingTurnsItselfOffRatherThanLeavingTheServerUnjoinable()
+    {
+        // The failure this exists for. A server not configured to expect the forwarding data reads it
+        // as the first Minecraft packet, cannot decode it, and drops the connection — every time, for
+        // every player. Left alone, the server is simply unjoinable, and the only clue is a decoder
+        // error in a log nobody is watching.
+        //
+        // The signature is specific: the backend hangs up before it has said a single word of
+        // Minecraft. So after a few of those in a row the firewall stops forwarding by itself, and
+        // people can play again while somebody works out the setting.
+        await using var rude = new ClosesImmediatelyServer();
+
+        var profile = new ServerProfile
+        {
+            Name = "rude",
+            PublicPort = GetFreeTcpPort(),
+            BackendHost = "127.0.0.1",
+            BackendPort = rude.Port,
+            IpForwarding = IpForwardingMode.ProxyProtocol,
+        };
+
+        Assert.Equal(IpForwardingMode.ProxyProtocol, profile.EffectiveIpForwarding);
+
+        var banOptions = Options.Create(new FirewallBanOptions { StrikesBeforeBan = 100 });
+        using var banService = new FirewallBanService(banOptions,
+            new NeverBanList(Options.Create(new NeverBanOptions())), new FakeWindowsFirewallGateway(),
+            new RecordingAlertSender(), NullLogger<FirewallBanService>.Instance);
+
+        using var governor = DefenseTestFactory.CreateGovernor();
+        using var bots = DefenseTestFactory.CreateBotDetector();
+        using var anomaly = DefenseTestFactory.CreateAnomalyDetector();
+        using var key = new MinecraftFirewall.Proxy.Identity.Premium.RsaServerKeyPair();
+        using var cts = new CancellationTokenSource();
+
+        var listener = new ProxyListener(profile,
+            DefenseTestFactory.CreatePolicyEngine(banService, banOptions: new FirewallBanOptions { StrikesBeforeBan = 100 }),
+            new IdentityOptions(), new DangerousCommandOptions().Commands, new MessagesOptions(),
+            PremiumTestFactory.CreateHandshake(key), governor, bots, new InspectionOptions(),
+            anomaly, DefenseTestFactory.CreateProtocolLearning(), NullLogger.Instance);
+
+        _ = listener.RunAsync(cts.Token);
+        Assert.True(await WaitUntilAsync(() => IsPortListening(profile.PublicPort), TimeSpan.FromSeconds(5)));
+
+        byte[] traffic =
+        [
+            .. MinecraftPacketBuilder.BuildHandshakeFrame(767, "localhost", (ushort)profile.PublicPort, nextState: 2),
+            .. MinecraftPacketBuilder.BuildLoginStartFrame("PlayerX"),
+        ];
+
+        for (int i = 0; i < 4; i++)
+            await SendAndHalfCloseAsync(profile.PublicPort, traffic);
+
+        Assert.True(await WaitUntilAsync(() => profile.ForwardingHealth.Suspended, TimeSpan.FromSeconds(3)),
+            "forwarding kept breaking every connection and was never switched off");
+
+        Assert.Equal(IpForwardingMode.None, profile.EffectiveIpForwarding);
+
+        await cts.CancelAsync();
+    }
+
+    [Fact]
+    public void AWorkingSessionClearsWhateverWentBeforeIt()
+    {
+        // The counter is about failures that happen before anything has ever worked. One session where
+        // the backend actually spoke means they were something else — a restart, a bad network, somebody
+        // closing the game — and the count starts again from nothing.
+        var health = new IpForwardingHealth();
+
+        Assert.False(health.RecordFailureBeforeBackendSpoke());
+        Assert.False(health.RecordFailureBeforeBackendSpoke());
+
+        health.RecordWorkingSession();
+
+        Assert.False(health.RecordFailureBeforeBackendSpoke());
+        Assert.False(health.RecordFailureBeforeBackendSpoke());
+        Assert.False(health.Suspended);
+    }
+
+    [Fact]
+    public void SuspendingIsAnnouncedExactlyOnce()
+    {
+        // The log line names the setting somebody has to change, and repeating it on every connection
+        // for the rest of the day would bury the entry that matters.
+        var health = new IpForwardingHealth();
+
+        Assert.False(health.RecordFailureBeforeBackendSpoke());
+        Assert.False(health.RecordFailureBeforeBackendSpoke());
+        Assert.True(health.RecordFailureBeforeBackendSpoke());
+
+        Assert.True(health.Suspended);
+        Assert.False(health.RecordFailureBeforeBackendSpoke());
+    }
+
     /// <summary>A backend that accepts and immediately closes, the way a Minecraft server does when the
     /// first thing it reads is not a packet it can decode.</summary>
     private sealed class ClosesImmediatelyServer : IAsyncDisposable

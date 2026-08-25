@@ -1,6 +1,6 @@
 name: MinecraftFirewallBridge
 main: dev.cayadev.mcfirewall.bridge.FirewallBridgePlugin
-version: 1.7.2
+version: 1.7.3
 api-version: "1.13"
 author: MinecraftFirewall
 description: Optional server-side half of MinecraftFirewall. Protects players held at the login prompt, and makes the login commands real ones.

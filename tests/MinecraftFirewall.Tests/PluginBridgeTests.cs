@@ -154,6 +154,34 @@ public class PluginBridgeTests
     }
 
     [Fact]
+    public async Task NothingIsSentToTheServerBeforeItHasEnteredPlayState()
+    {
+        // The bug this exists for, found on a live server and not by any test here.
+        //
+        // Packet ids live in per-state namespaces. Finish Configuration is what moves the SERVER into
+        // Play, and the hold was being written before it was forwarded — so the server read a
+        // Play-state custom payload id against Configuration's namespace, could not decode it, and
+        // dropped the connection. Every login, for everyone:
+        //
+        //     Received unknown packet id 21
+        //
+        // 21 is the Play custom payload id for this version. Order is the whole of the fix, so order
+        // is what this asserts.
+        Harness harness = Create(useServerPlugin: true);
+
+        await RunAsync(harness, Movement());
+
+        List<int> ids = BackendPacketIds(harness);
+        int finishConfiguration = ids.IndexOf(harness.Ids.ConfigurationFinishConfigurationServerbound);
+        int firstBridgePacket = ids.IndexOf(harness.Ids.PlayCustomPayloadServerbound);
+
+        Assert.True(finishConfiguration >= 0, "the server never received Finish Configuration");
+        Assert.True(firstBridgePacket >= 0, "the plugin was never told to hold");
+        Assert.True(finishConfiguration < firstBridgePacket,
+            "the server was spoken to in Play ids while it was still in Configuration — it will drop the connection");
+    }
+
+    [Fact]
     public async Task AndReleasedWhenTheyAuthenticate()
     {
         var entry = new IdentityEntry { Username = "Steve", PasswordHash = PasswordHasher.Hash("correcthorse") };
@@ -225,6 +253,25 @@ public class PluginBridgeTests
         }
 
         return harness.Inspector.DisconnectReason;
+    }
+
+    /// <summary>Every packet id the proxy wrote to the backend, in order.</summary>
+    private static List<int> BackendPacketIds(Harness harness)
+    {
+        var ids = new List<int>();
+        ReadOnlySpan<byte> remaining = harness.Backend.ToArray();
+
+        while (!remaining.IsEmpty)
+        {
+            int length = VarInt.Decode(remaining, out int prefix);
+            if (length <= 0 || prefix + length > remaining.Length)
+                break;
+
+            ids.Add(Decode(remaining[..(prefix + length)].ToArray()).PacketId);
+            remaining = remaining[(prefix + length)..];
+        }
+
+        return ids;
     }
 
     /// <summary>The bridge payloads the proxy wrote to the backend, with the channel stripped.</summary>

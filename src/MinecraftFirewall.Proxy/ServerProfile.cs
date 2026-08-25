@@ -52,5 +52,26 @@ public sealed class ServerProfile
     /// </summary>
     public IpForwardingMode IpForwarding { get; init; } = IpForwardingMode.None;
 
+    /// <summary>
+    /// Whether forwarding is currently working on this server, and the switch that turns it off by
+    /// itself when it plainly is not.
+    ///
+    /// A mismatch between this setting and the server's own makes every connection fail on arrival,
+    /// which leaves the server unjoinable for a reason nobody can see from inside the game. Rather
+    /// than let that stand, the firewall notices and stops forwarding — see IpForwardingHealth.
+    /// </summary>
+    public IpForwardingHealth ForwardingHealth { get; } = new();
+
+    /// <summary>
+    /// The forwarding mode actually in use, which is the configured one unless it has been suspended
+    /// for breaking every connection.
+    ///
+    /// Every decision reads this rather than <see cref="IpForwarding"/>, so that suspending it has a
+    /// single meaning and cannot be half-applied — a connection that sent a PROXY header but rewrote
+    /// nothing, or the reverse, would be a new failure of its own.
+    /// </summary>
+    public IpForwardingMode EffectiveIpForwarding =>
+        ForwardingHealth.Suspended ? IpForwardingMode.None : IpForwarding;
+
     public IdentityStore IdentityStore { get; } = new();
 }

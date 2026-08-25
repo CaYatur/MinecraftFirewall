@@ -194,6 +194,8 @@
                                                 <ComboBoxItem Content="{loc:T ForwardProxyProtocol}"/>
                                                 <ComboBoxItem Content="{loc:T ForwardBungeeCord}"/>
                                             </ComboBox>
+                                            <Button Content="{loc:T BtnSetUpForwarding}" Click="BtnSetUpForwarding_Click"
+                                                    Tag="{Binding}" HorizontalAlignment="Left" Margin="0,8,0,0"/>
 
                                             <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T FieldAllowedDomains}" Margin="0,16,0,0"/>
                                             <TextBox Text="{Binding AllowedHostnamesText, UpdateSourceTrigger=PropertyChanged}"

@@ -255,6 +255,11 @@ public static class ClientConnection
         AesCfb8Stream? cipherStream = null;
         bool claimRequestedByPlayer = false;
 
+        // Declared out here so the catch below can see it. Whether the backend ever spoke Minecraft to
+        // us is the one thing that separates "the server refused what we sent it" from every ordinary
+        // way a connection ends.
+        var compressionState = new ConnectionCompression();
+
         try
         {
             if (decision.Premium is not null)
@@ -309,7 +314,7 @@ public static class ClientConnection
             // Sent as it arrived unless the profile asks for BungeeCord forwarding, in which case the
             // address field carries the player's real IP as well. Only on a login: a server-list ping
             // has no player to describe.
-            byte[] outboundHandshake = profile.IpForwarding == IpForwardingMode.BungeeCord
+            byte[] outboundHandshake = profile.EffectiveIpForwarding == IpForwardingMode.BungeeCord
                 ? BungeeCordHandshake.Rewrite(handshake, remoteAddress, username)
                 : handshakeFrame.Raw;
 
@@ -322,11 +327,6 @@ public static class ClientConnection
                 // prompt needs both halves of the connection: only the pump ever learns where the
                 // backend has put them, and only the inspector knows when they have authenticated.
                 var authHold = new AuthHold();
-
-                // Learned from the backend's own Set Compression, never assumed. Every packet the
-                // proxy composes has to be encoded for the threshold this connection negotiated, and
-                // a frame encoded for the wrong one disconnects the client rather than being ignored.
-                var compressionState = new ConnectionCompression();
 
                 var inspector = new PlayStateInspector(
                     profile, username, remoteAddress, packetIds, decision.GraceAuth,
@@ -355,6 +355,9 @@ public static class ClientConnection
             {
                 await PumpBothWaysAsync(clientIo, backendStream, hostShutdown).ConfigureAwait(false);
             }
+
+            if (compressionState.Established)
+                profile.ForwardingHealth.RecordWorkingSession();
         }
         catch (Exception ex) when (ex is IOException or SocketException or ObjectDisposedException)
         {
@@ -362,7 +365,14 @@ public static class ClientConnection
             // alt-F4s the game, a router drops, the backend restarts — and until now every one of
             // those produced a forty-line stack trace logged at error level, which buries the entries
             // that do mean something and tells whoever reads it nothing they can act on.
-            LogTransportFailure(profile, remoteAddress, username, ex, logger);
+            // A backend that hung up before saying a word is the signature of a setting mismatch, and
+            // nothing else looks like it. Counted, and after a few in a row forwarding is switched off
+            // by itself rather than leaving the server unjoinable.
+            bool justSuspended = !compressionState.Established &&
+                                 profile.EffectiveIpForwarding != IpForwardingMode.None &&
+                                 profile.ForwardingHealth.RecordFailureBeforeBackendSpoke();
+
+            LogTransportFailure(profile, remoteAddress, username, ex, justSuspended, logger);
         }
         finally
         {
@@ -385,9 +395,21 @@ public static class ClientConnection
     /// login was allowed, which is exactly what this is.
     /// </summary>
     private static void LogTransportFailure(ServerProfile profile, IPAddress remoteAddress, string username,
-        Exception ex, ILogger logger)
+        Exception ex, bool justSuspended, ILogger logger)
     {
-        if (profile.IpForwarding != IpForwardingMode.None)
+        if (justSuspended)
+        {
+            logger.LogWarning(
+                "[{Profile}] IP forwarding has been switched OFF by itself. Three connections in a row died " +
+                "before the server said anything, which is what happens when {Mode} is set here but the server " +
+                "is not configured to expect it ({Setting}). Players can join again now, but they will show as " +
+                "127.0.0.1 until the server is configured and this firewall is restarted.",
+                profile.Name, profile.IpForwarding, DescribeExpectedSetting(profile.IpForwarding));
+
+            return;
+        }
+
+        if (profile.EffectiveIpForwarding != IpForwardingMode.None)
         {
             logger.LogWarning(
                 "[{Profile}] the connection for '{Username}' ({Ip}) failed right after login: {Message}. " +
@@ -395,9 +417,7 @@ public static class ClientConnection
                 "({Setting}). A server that is not will drop every connection the moment the forwarding data " +
                 "arrives, which looks exactly like this.",
                 profile.Name, username, remoteAddress, ex.Message, profile.IpForwarding,
-                profile.IpForwarding == IpForwardingMode.ProxyProtocol
-                    ? "Paper: proxies.proxy-protocol: true in config/paper-global.yml"
-                    : "Spigot/Paper: bungeecord: true under settings in spigot.yml");
+                DescribeExpectedSetting(profile.IpForwarding));
 
             return;
         }
@@ -405,6 +425,11 @@ public static class ClientConnection
         logger.LogDebug("[{Profile}] the connection for '{Username}' ({Ip}) ended: {Message}",
             profile.Name, username, remoteAddress, ex.Message);
     }
+
+    private static string DescribeExpectedSetting(IpForwardingMode mode) =>
+        mode == IpForwardingMode.ProxyProtocol
+            ? "Paper: proxies.proxy-protocol: true in config/paper-global.yml"
+            : "Spigot/Paper: bungeecord: true under settings in spigot.yml";
 
     /// <summary>
     /// Feeds a finished connection to the anomaly baseline and hands any finding to the responder.
@@ -587,7 +612,7 @@ public static class ClientConnection
             await backendClient.ConnectAsync(profile.BackendHost, profile.BackendPort, connectCts.Token).ConfigureAwait(false);
             NetworkStream backendStream = backendClient.GetStream();
 
-            if (profile.IpForwarding == IpForwardingMode.ProxyProtocol &&
+            if (profile.EffectiveIpForwarding == IpForwardingMode.ProxyProtocol &&
                 client.Client.RemoteEndPoint is IPEndPoint source &&
                 client.Client.LocalEndPoint is IPEndPoint destination)
             {

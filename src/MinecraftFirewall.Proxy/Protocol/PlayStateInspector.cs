@@ -276,6 +276,20 @@ public sealed class PlayStateInspector(
                 {
                     _inPlayState = true;
 
+                    // Forwarded FIRST, before the proxy says anything to anybody.
+                    //
+                    // This packet is what moves the *server* into Play state, and packet ids live in
+                    // per-state namespaces. Anything sent to the backend ahead of it is read against
+                    // Configuration's namespace, where the Play ids mean something else or nothing at
+                    // all — and a server that cannot decode a packet does not ignore it, it drops the
+                    // connection. That is not hypothetical: sending the plugin bridge's hold one
+                    // packet too early produced "Received unknown packet id 21" on every single login,
+                    // 21 being the Play-state custom payload id read as a Configuration one.
+                    //
+                    // The client is already in Play by this point — it switched when it sent this — so
+                    // only the backend's side of the ordering was ever in question.
+                    await backendStream.WriteAsync(packet.RawFrame, ct).ConfigureAwait(false);
+
                     if (AnnouncePremiumLockSucceeded)
                     {
                         AnnouncePremiumLockSucceeded = false;
@@ -288,6 +302,8 @@ public sealed class PlayStateInspector(
                         _lastAuthReminder = _now();
                         PromptToAuthenticate();
                     }
+
+                    continue;
                 }
 
                 await backendStream.WriteAsync(packet.RawFrame, ct).ConfigureAwait(false);

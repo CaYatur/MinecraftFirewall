@@ -1116,4 +1116,48 @@ public partial class MainWindow : Window
         Toast(message, success);
         CheckPlugin();
     }
+
+    // ------------------------------------------------------------------ the server's own half
+    //
+    // IP forwarding takes two settings that have to agree, on opposite sides of a boundary. When they
+    // do not, the failure is total: the server reads the forwarding data as a Minecraft packet,
+    // cannot decode it, and drops every connection. Setting one side here and leaving somebody to
+    // find the other is exactly how that happens, so this sets the other one too.
+
+    private void BtnSetUpForwarding_Click(object sender, RoutedEventArgs e)
+    {
+        if (((Button)sender).Tag is not ServerRow row)
+            return;
+
+        bool enable = row.IpForwarding != "None";
+
+        BackendServerInfo server = new BackendServerInspector().Inspect(row.BackendPort);
+        ForwardingSetupPlan plan = new ServerForwardingSetup().Plan(server, enable);
+
+        if (!plan.Possible)
+        {
+            // Includes the vanilla case, which is not a failure to apologise for: vanilla only ever
+            // sees the socket it is talking to and has no setting for this at all.
+            Toast(plan.Explanation, ok: false);
+            return;
+        }
+
+        if (plan.AlreadyEnabled == enable)
+        {
+            Toast(plan.Explanation, ok: true);
+            return;
+        }
+
+        // The exact line, in the question. Approving "set my server up" is not the same as approving
+        // an edit to a file somebody else's software owns.
+        MessageBoxResult answer = MessageBox.Show(
+            string.Format(Strings.Current["ForwardingSetupFormat"], plan.Explanation),
+            Strings.Current["ForwardingSetupTitle"], MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+        if (answer != MessageBoxResult.Yes)
+            return;
+
+        (bool success, string message) = new ServerForwardingSetup().Apply(plan);
+        Toast(message, success);
+    }
 }

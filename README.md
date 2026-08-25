@@ -577,6 +577,26 @@ Both need the server configured to expect the same thing, and **neither is safe 
 told to read a forwarded address believes whoever it is talking to. Keep the backend port bound to
 `127.0.0.1`, which is exactly what the Security check page tests.
 
+**The Servers page will configure your server for you.** Pick a mode, press *Set my server up for
+this*, and it finds the file, shows you the exact line it would change, and writes nothing until you
+approve that line. One line changes, the original is kept beside it, and the comments the file ships
+with are left alone.
+
+**And if the two ever disagree, the firewall notices.** A server not configured to expect the
+forwarding data reads it as the first Minecraft packet, cannot decode it, and drops the connection —
+every time, for every player, which leaves the server unjoinable for a reason invisible from inside
+the game. After three connections that die before the server has said a word, forwarding switches
+itself off, the log names the setting you need, and people can play again. Nothing is written to
+disk, so the next restart tries again.
+
+### Vanilla servers
+
+**A vanilla server cannot be told a player's real address by any means.** That is not a limitation of
+this firewall; there is no such mechanism in the game. Vanilla reads the socket it is talking to and
+has no setting for anything else — the only forwarding-adjacent key it has is
+`prevent-proxy-connections`, which does something different. Paper and Spigot both have one, and the
+button above will set it. On vanilla, leave forwarding off.
+
 ---
 
 ## Honest limitations

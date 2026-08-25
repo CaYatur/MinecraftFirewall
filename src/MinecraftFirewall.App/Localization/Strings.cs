@@ -91,6 +91,11 @@ public sealed class Strings : INotifyPropertyChanged
         ["ChkMalformed"] =
             "Refuse packets a real client could not send (bad interaction types, impossible coordinates, " +
             "trailing bytes) — this is what PacketFixer-style plugins do, but before the server parses them",
+        ["BtnSetUpForwarding"] = "Set my server up for this",
+        ["ForwardingSetupTitle"] = "Change your server's configuration?",
+        ["ForwardingSetupFormat"] =
+            "{0}\n\nYour Minecraft server must be restarted afterwards. The previous file is kept beside it. " +
+            "Continue?",
         ["PluginHeading"] = "Server plugin (optional)",
         ["PluginBlurb"] =
             "A firewall in front of your server cannot stop a creeper: a player waiting at the login prompt is " +
@@ -361,6 +366,11 @@ public sealed class Strings : INotifyPropertyChanged
             "Gerçek bir istemcinin gönderemeyeceği paketleri reddet (hatalı etkileşim türleri, imkânsız " +
             "koordinatlar, artık baytlar) — PacketFixer tarzı eklentilerin yaptığı iş, ama sunucu paketi " +
             "çözümlemeden önce",
+        ["BtnSetUpForwarding"] = "Sunucumu buna göre ayarla",
+        ["ForwardingSetupTitle"] = "Sunucunuzun yapılandırması değiştirilsin mi?",
+        ["ForwardingSetupFormat"] =
+            "{0}\n\nArdından Minecraft sunucunuzu yeniden başlatmanız gerekir. Önceki dosya yanında saklanır. " +
+            "Devam edilsin mi?",
         ["PluginHeading"] = "Sunucu eklentisi (isteğe bağlı)",
         ["PluginBlurb"] =
             "Sunucunun önündeki bir güvenlik duvarı creeper'ı durduramaz: giriş ekranında bekleyen oyuncu " +
