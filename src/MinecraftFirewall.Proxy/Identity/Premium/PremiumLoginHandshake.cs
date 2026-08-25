@@ -62,6 +62,15 @@ public sealed class PremiumLoginHandshake(
         {
             entry.PremiumRequired = true;
             entry.PremiumLockedAtRuntime = true;
+
+            // This is the moment this name joined the server, and the Players page has a column for it.
+            // Only the password path used to set it, so anybody who took the premium route showed a
+            // dash where their join date belonged — which reads as missing data rather than as a
+            // different kind of account.
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            entry.RegisteredAt ??= now;
+            entry.Record(PlayerEventKind.PremiumVerified, null,
+                "proved ownership of this name with a Minecraft account", now);
             logger.LogWarning(
                 "'{Username}' proved ownership of a genuine Minecraft account and has been permanently claimed. Only that account can use this name from now on.",
                 username);

@@ -42,5 +42,22 @@ public sealed class FirewallBanOptions
     /// <summary>Consecutive rate-limit violations from one IP before a firewall-level ban is issued.</summary>
     public int StrikesBeforeBan { get; set; } = 5;
 
+    /// <summary>
+    /// How many different usernames one address may try before being refused too often starts
+    /// counting towards a ban.
+    ///
+    /// Reconnecting too fast is not an offence, and it used to be treated as one: five logins in
+    /// thirty seconds is the limit, the sixth earned a strike, and five strikes is a six-hour
+    /// machine-wide ban — so somebody impatiently mashing reconnect banned themselves in about a
+    /// minute, having done nothing but try to join. Refusing the connection is already the whole
+    /// response to going too fast; a ban on top punishes a bad connection or a stuck loading screen.
+    ///
+    /// What a player cannot do, however fast they click, is arrive under a series of different names.
+    /// That is somebody working through a list, and it still escalates. Volume alone is somebody
+    /// else's job: the admission-control governor refuses floods before a byte is read, and it does
+    /// still ban.
+    /// </summary>
+    public int RateLimitUsernamesBeforeStrike { get; set; } = 3;
+
     public TimeSpan CleanupInterval { get; set; } = TimeSpan.FromMinutes(1);
 }

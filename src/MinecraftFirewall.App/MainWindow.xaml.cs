@@ -1158,4 +1158,18 @@ public partial class MainWindow : Window
         (bool success, string message) = new ServerForwardingSetup().Apply(plan);
         Toast(message, success);
     }
+
+    /// <summary>
+    /// Brings the player-facing messages up to the current defaults.
+    ///
+    /// Only the ones nobody has edited: a message is replaced when its text is one this project itself
+    /// shipped in an earlier release, which is proof no person chose it. Anything else stays exactly as
+    /// it was written, even if that means it keeps older wording. Being unhelpful is recoverable;
+    /// overwriting somebody's own words is not.
+    /// </summary>
+    private void BtnRefreshMessages_Click(object sender, RoutedEventArgs e)
+    {
+        (bool success, string message) = _config.RefreshDefaultMessages();
+        Toast(message, success);
+    }
 }

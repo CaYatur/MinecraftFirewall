@@ -118,7 +118,12 @@ public sealed class PolicyEngine(
 
         if (!rateLimiter.TryRegisterAttempt(profile.Name, remoteAddress, RateLimitKind.StatusPing))
         {
-            RegisterStrikeAndMaybeBan(remoteAddress, $"[{profile.Name}] status-ping rate limit exceeded");
+            // Refused, and that is all. A client refreshing its server list too eagerly is not an
+            // attack, and banning a machine for it is out of all proportion to what it did. Genuine
+            // volume is the admission-control governor's job, which refuses before a byte is read.
+            logger.LogDebug("[{Profile}] status pings from {Ip} are coming too fast; refusing this one.",
+                profile.Name, remoteAddress);
+
             return new PolicyDecision(false, "Status-ping rate limit exceeded.");
         }
 
@@ -133,7 +138,7 @@ public sealed class PolicyEngine(
 
         if (!rateLimiter.TryRegisterAttempt(profile.Name, remoteAddress, RateLimitKind.LoginAttempt))
         {
-            RegisterStrikeAndMaybeBan(remoteAddress, $"[{profile.Name}] login rate limit exceeded");
+            NoteLoginRateLimited(profile.Name, remoteAddress, username);
             return new PolicyDecision(false, "Login rate limit exceeded.");
         }
 
@@ -436,6 +441,40 @@ public sealed class PolicyEngine(
         alerts.Send(AlertKind.Ban,
             $"🧠 **Anomaly action: {action}** on `{AlertText.Field(profileName)}`\n" +
             $"`{AlertText.Field(username)}` from `{AlertText.Field(remoteAddress.ToString())}` — {AlertText.Field(summary)}");
+    }
+
+    /// <summary>
+    /// Handles a login refused for arriving too fast.
+    ///
+    /// Refusing it is the response. It used to also earn a strike, and five strikes is a six-hour
+    /// machine-wide ban — so somebody impatiently reconnecting banned themselves in about a minute,
+    /// having done nothing but try to join. That was reported by somebody it happened to, and it is
+    /// the wrong shape of answer: the rate limit already stopped them, and a ban is for behaviour, not
+    /// for impatience.
+    ///
+    /// What still escalates is the thing a player cannot do however fast they click — arriving under
+    /// a series of different names. One person retrying produces one name; a list being worked through
+    /// produces many, and that is what this looks at instead of the clock.
+    /// </summary>
+    private void NoteLoginRateLimited(string profileName, IPAddress remoteAddress, string username)
+    {
+        // Recorded first, then counted. A refused attempt never reaches the bot detector's own
+        // assessment, so without this the names an address burned through while being rate-limited
+        // would all be thrown away with the connections that carried them.
+        int names = botDetector.NoteAttemptedUsername(remoteAddress, username);
+
+        if (names <= _banOptions.RateLimitUsernamesBeforeStrike)
+        {
+            logger.LogInformation(
+                "[{Profile}] '{Username}' ({Ip}) is reconnecting faster than the limit allows. Refused, " +
+                "not counted against them — one name arriving quickly is impatience, not an attack.",
+                profileName, username, remoteAddress);
+
+            return;
+        }
+
+        RegisterStrikeAndMaybeBan(remoteAddress,
+            $"[{profileName}] login rate limit exceeded across {names} different usernames from one address");
     }
 
     private void RegisterStrikeAndMaybeBan(IPAddress address, string reason, int weight = 1)

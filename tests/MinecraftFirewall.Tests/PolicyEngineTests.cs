@@ -172,17 +172,42 @@ public class PolicyEngineTests
     }
 
     [Fact]
-    public async Task EvaluateLogin_RepeatedViolations_EscalatesToFirewallBan()
+    public async Task EvaluateLogin_ManyUsernamesTooFast_EscalatesToFirewallBan()
     {
+        // A different name every time is the thing a player cannot do however fast they click. That
+        // still escalates, and it is what the rate limit's teeth are actually for.
         var fixture = CreateFixture(strikesBeforeBan: 3, loginMaxPerWindow: 0); // every attempt is a rate-limit violation
         var profile = CreateProfile();
         var ip = IPAddress.Parse("203.0.113.1");
 
-        for (int i = 0; i < 3; i++)
-            await fixture.Engine.EvaluateLogin(profile, ip, "Attacker");
+        for (int i = 0; i < 8; i++)
+            await fixture.Engine.EvaluateLogin(profile, ip, $"Victim{i}");
 
         Assert.Contains(ip, fixture.Gateway.RuledAddresses);
         Assert.True(fixture.BanService.IsBanned(ip));
+    }
+
+    [Fact]
+    public async Task EvaluateLogin_OnePersonReconnectingTooFast_IsRefusedButNeverBanned()
+    {
+        // Reported by somebody it happened to. Five logins in thirty seconds is the limit, the sixth
+        // earned a strike, and five strikes is a six-hour machine-wide ban — so an impatient player
+        // mashing reconnect banned themselves in about a minute, having done nothing but try to join.
+        //
+        // Refusing the connection is the whole response to going too fast. A ban is for behaviour, and
+        // one name arriving quickly is a bad connection or a stuck loading screen, not behaviour.
+        var fixture = CreateFixture(strikesBeforeBan: 3, loginMaxPerWindow: 0);
+        var profile = CreateProfile();
+        var ip = IPAddress.Parse("203.0.113.44");
+
+        for (int i = 0; i < 20; i++)
+        {
+            PolicyDecision decision = await fixture.Engine.EvaluateLogin(profile, ip, "Impatient");
+            Assert.False(decision.Allow); // still refused, every time
+        }
+
+        Assert.False(fixture.BanService.IsBanned(ip));
+        Assert.DoesNotContain(ip, fixture.Gateway.RuledAddresses);
     }
 
     [Fact]
@@ -192,8 +217,8 @@ public class PolicyEngineTests
         var profile = CreateProfile();
         var loopback = IPAddress.Parse("127.0.0.1");
 
-        for (int i = 0; i < 5; i++)
-            await fixture.Engine.EvaluateLogin(profile, loopback, "Attacker");
+        for (int i = 0; i < 8; i++)
+            await fixture.Engine.EvaluateLogin(profile, loopback, $"Attacker{i}");
 
         Assert.Empty(fixture.Gateway.RuledAddresses);
         Assert.False(fixture.BanService.IsBanned(loopback));
@@ -210,12 +235,15 @@ public class PolicyEngineTests
         var profileB = CreateProfile(name: "profileB");
         var ip = IPAddress.Parse("203.0.113.1");
 
-        await fixture.Engine.EvaluateLogin(profileA, ip, "Attacker");
-        await fixture.Engine.EvaluateLogin(profileA, ip, "Attacker");
+        // A different name each time, because that is what earns a ban now — one name arriving too
+        // fast is impatience and is only refused. What this test is about is unchanged: once banned,
+        // the ban follows the address to every fronted server on the box.
+        for (int i = 0; i < 8; i++)
+            await fixture.Engine.EvaluateLogin(profileA, ip, $"Attacker{i}");
 
         Assert.True(fixture.BanService.IsBanned(ip));
 
-        var decisionOnB = await fixture.Engine.EvaluateLogin(profileB, ip, "Attacker");
+        var decisionOnB = await fixture.Engine.EvaluateLogin(profileB, ip, "Attacker0");
 
         Assert.False(decisionOnB.Allow);
     }

@@ -526,6 +526,15 @@
                     <StackPanel x:Name="PageSettings" Visibility="Collapsed">
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T MessagesHeading}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T MessagesBlurb}" TextWrapping="Wrap"/>
+                                <Button Content="{loc:T BtnRefreshMessages}" Click="BtnRefreshMessages_Click"
+                                        HorizontalAlignment="Left" Margin="0,13,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
                                 <TextBlock Style="{StaticResource H2}" Text="{loc:T SettingsLanguageTitle}"/>
                                 <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                                     <RadioButton x:Name="LangEn" GroupName="Lang" Content="English" Margin="0,0,22,0" Checked="Language_Changed" Tag="en"/>

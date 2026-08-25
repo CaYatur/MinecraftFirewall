@@ -104,6 +104,17 @@ public class PremiumAutoClaimTests : IDisposable
         Assert.True(outcome.Success);
         Assert.True(entry.PremiumRequired);   // the name is now locked...
         Assert.Equal(uuid, entry.PinnedUuid); // ...to this specific account
+
+        // Locked at runtime, so it survives a restart. Without this the promise made to the player —
+        // that only their account can ever use this name — lasted until the service came back up, and
+        // then failed OPEN.
+        Assert.True(entry.PremiumLockedAtRuntime);
+
+        // And this is the moment the name joined the server. Only the password path used to record it,
+        // so anybody taking the premium route showed a dash where their join date belonged — which
+        // reads as missing data rather than as a different kind of account.
+        Assert.NotNull(entry.RegisteredAt);
+        Assert.Contains(entry.Events, e => e.Kind == PlayerEventKind.PremiumVerified);
     }
 
     [Fact]

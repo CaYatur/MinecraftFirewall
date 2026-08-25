@@ -91,6 +91,12 @@ public sealed class Strings : INotifyPropertyChanged
         ["ChkMalformed"] =
             "Refuse packets a real client could not send (bad interaction types, impossible coordinates, " +
             "trailing bytes) — this is what PacketFixer-style plugins do, but before the server parses them",
+        ["MessagesHeading"] = "Player messages",
+        ["MessagesBlurb"] =
+            "Your configuration file keeps the messages players see, and it is never overwritten when you " +
+            "update — so improved wording and colour from a newer version do not reach an existing install. " +
+            "This brings them up to date, and only touches messages you have not edited yourself.",
+        ["BtnRefreshMessages"] = "Update messages to the latest defaults",
         ["BtnSetUpForwarding"] = "Set my server up for this",
         ["ForwardingSetupTitle"] = "Change your server's configuration?",
         ["ForwardingSetupFormat"] =
@@ -366,6 +372,12 @@ public sealed class Strings : INotifyPropertyChanged
             "Gerçek bir istemcinin gönderemeyeceği paketleri reddet (hatalı etkileşim türleri, imkânsız " +
             "koordinatlar, artık baytlar) — PacketFixer tarzı eklentilerin yaptığı iş, ama sunucu paketi " +
             "çözümlemeden önce",
+        ["MessagesHeading"] = "Oyuncu mesajları",
+        ["MessagesBlurb"] =
+            "Oyuncuların gördüğü mesajlar yapılandırma dosyanızda tutulur ve güncellemede asla üzerine " +
+            "yazılmaz — bu yüzden yeni sürümdeki iyileştirilmiş metinler ve renkler mevcut bir kuruluma " +
+            "ulaşmaz. Bu düğme onları güncelleştirir ve yalnızca sizin düzenlemediğiniz mesajlara dokunur.",
+        ["BtnRefreshMessages"] = "Mesajları en son varsayılanlara güncelle",
         ["BtnSetUpForwarding"] = "Sunucumu buna göre ayarla",
         ["ForwardingSetupTitle"] = "Sunucunuzun yapılandırması değiştirilsin mi?",
         ["ForwardingSetupFormat"] =

@@ -7,6 +7,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.FoodLevelChangeEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -73,10 +74,42 @@ public final class FirewallBridgePlugin extends JavaPlugin implements Listener, 
      */
     private final Set<UUID> held = Collections.synchronizedSet(new HashSet<UUID>());
 
+    /**
+     * How long the darkened screen lasts before it expires on its own, and how often it is renewed
+     * while somebody is still held.
+     *
+     * <p>Bounded, and that is the entire point. The first version of this used
+     * {@code Integer.MAX_VALUE} — effectively forever — and cleared it only when the firewall said to
+     * release. A player kicked while held (asking to lock their name does exactly that) quit without
+     * ever being released, and the effect was written into their saved data. They came back blind,
+     * permanently, with nothing left running that knew to undo it.
+     *
+     * <p>So the effect now outlives nothing: it is tied to this plugin's own set of held players,
+     * renewed by this plugin's own task while they are in it, and gone within twenty seconds of them
+     * leaving it whatever happens to the connection. A temporary effect must not be able to become a
+     * permanent one.
+     */
+    private static final int BLINDNESS_TICKS = 20 * 20;
+    private static final long RENEW_EVERY_TICKS = 20 * 10;
+
+    /** Longer than any potion a player could be carrying, and shorter than the broken effect this
+     * used to leave behind. Used to recognise that leftover and clear it. */
+    private static final int IMPOSSIBLE_DURATION_TICKS = 20 * 60 * 60;
+
     @Override
     public void onEnable() {
         getServer().getMessenger().registerIncomingPluginChannel(this, CHANNEL, this);
         getServer().getPluginManager().registerEvents(this, this);
+
+        // Renews the darkened screen for everybody still held. The effect is deliberately short-lived,
+        // so this task is what keeps it going — which means it stops the moment somebody leaves the
+        // set, or the moment this plugin stops, without anything having to remember to undo it.
+        getServer().getScheduler().runTaskTimer(this, new Runnable() {
+            @Override
+            public void run() {
+                renewHeldPlayers();
+            }
+        }, RENEW_EVERY_TICKS, RENEW_EVERY_TICKS);
 
         getLogger().info("Ready. Players held at the login prompt are protected from damage and kept in place.");
         getLogger().info("This plugin never decides who is held. MinecraftFirewall decides, and tells it.");
@@ -84,9 +117,32 @@ public final class FirewallBridgePlugin extends JavaPlugin implements Listener, 
 
     @Override
     public void onDisable() {
-        // Nobody stays frozen because the plugin stopped. Whatever is in here was temporary state
-        // owned by something that is no longer running, and leaving it applied would strand people.
+        // Nobody stays frozen, or blind, because the plugin stopped. Whatever was in here was
+        // temporary state owned by something that is no longer running, and leaving it applied would
+        // strand people.
+        for (UUID id : snapshotHeld()) {
+            Player player = getServer().getPlayer(id);
+            if (player != null) {
+                clearBlindness(player);
+            }
+        }
+
         held.clear();
+    }
+
+    private UUID[] snapshotHeld() {
+        synchronized (held) {
+            return held.toArray(new UUID[0]);
+        }
+    }
+
+    private void renewHeldPlayers() {
+        for (UUID id : snapshotHeld()) {
+            Player player = getServer().getPlayer(id);
+            if (player != null && player.isOnline()) {
+                applyBlindness(player);
+            }
+        }
     }
 
     // ---- what the firewall tells us -----------------------------------------------------------
@@ -116,12 +172,28 @@ public final class FirewallBridgePlugin extends JavaPlugin implements Listener, 
             return; // already held; being told again is normal, acting twice is not
         }
 
-        // Guarded separately. Blindness is the one call here that later versions reorganised, and a
-        // server where it fails must still get the protection that actually matters.
+        applyBlindness(player);
+    }
+
+    /**
+     * Darkens the screen for a short while. Renewed by the task above for as long as the player is
+     * held, so it follows the set exactly and cannot outlast it.
+     *
+     * <p>Guarded separately from everything else: blindness is the one call here that later versions
+     * reorganised, and a server where it fails must still get the protection that actually matters.
+     */
+    private void applyBlindness(Player player) {
         try {
-            player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, Integer.MAX_VALUE, 0, false, false));
+            player.addPotionEffect(new PotionEffect(PotionEffectType.BLINDNESS, BLINDNESS_TICKS, 0, false, false), true);
         } catch (Throwable ignored) {
             // A darkened screen is a nicety. Not being killed is not.
+        }
+    }
+
+    private void clearBlindness(Player player) {
+        try {
+            player.removePotionEffect(PotionEffectType.BLINDNESS);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -130,10 +202,7 @@ public final class FirewallBridgePlugin extends JavaPlugin implements Listener, 
             return;
         }
 
-        try {
-            player.removePotionEffect(PotionEffectType.BLINDNESS);
-        } catch (Throwable ignored) {
-        }
+        clearBlindness(player);
     }
 
     private boolean isHeld(Player player) {
@@ -222,6 +291,38 @@ public final class FirewallBridgePlugin extends JavaPlugin implements Listener, 
      */
     @EventHandler
     public void onQuit(PlayerQuitEvent event) {
-        held.remove(event.getPlayer().getUniqueId());
+        if (held.remove(event.getPlayer().getUniqueId())) {
+            // Cleared here as well as by expiry, because a player who is kicked while held — which is
+            // exactly what asking to lock your name does — is never released by the firewall. Without
+            // this the effect went into their saved data and came back with them.
+            clearBlindness(event.getPlayer());
+        }
+    }
+
+    /**
+     * Clears a darkened screen this plugin should never have left behind.
+     *
+     * <p>An earlier version applied blindness that effectively never expired, and a player kicked
+     * while held kept it in their saved data forever. Nothing that runs today can produce a blindness
+     * that long, and no potion in the game grants one either — so an hour is a length only that bug
+     * could have caused, which makes it safe to undo without touching an effect somebody meant to
+     * have.
+     */
+    @EventHandler
+    public void onJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+
+        try {
+            for (PotionEffect effect : player.getActivePotionEffects()) {
+                if (PotionEffectType.BLINDNESS.equals(effect.getType())
+                        && effect.getDuration() > IMPOSSIBLE_DURATION_TICKS) {
+                    clearBlindness(player);
+                    getLogger().info("Cleared a stuck blindness effect from " + player.getName()
+                            + " that an earlier version of this plugin left behind.");
+                    break;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
     }
 }

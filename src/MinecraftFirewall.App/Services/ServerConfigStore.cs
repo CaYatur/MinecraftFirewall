@@ -278,6 +278,88 @@ public sealed class ServerConfigStore
     /// removing their comments, and the whole point of the surgical writer is that this app does not
     /// do that.
     /// </summary>
+    /// <summary>
+    /// Brings player-facing messages up to the current defaults, but only the ones nobody has edited.
+    ///
+    /// Configuration wins over the compiled defaults, which is right — it is their file. But it means
+    /// an improved default never reaches anybody who installed an older release: their prompts stay as
+    /// they were, with nothing to say why. That is how a set of newly coloured messages arrived for
+    /// new installations and for nobody else.
+    ///
+    /// The safety rule is the whole design. A message is replaced only when its current text is one
+    /// this project itself shipped in an earlier release — proof that no person chose it. Anything
+    /// else was written by somebody, and is left exactly as they wrote it, even if that means it stays
+    /// plain while the rest gain colour. Being unhelpful is recoverable; overwriting somebody's own
+    /// words is not.
+    /// </summary>
+    public (bool Success, string Message) RefreshDefaultMessages()
+    {
+        try
+        {
+            string original = File.ReadAllText(ConfigPath);
+
+            JsonNode? root = JsonNode.Parse(original, documentOptions: new JsonDocumentOptions
+            {
+                CommentHandling = JsonCommentHandling.Skip,
+                AllowTrailingCommas = true,
+            });
+
+            if (root?["Messages"] is not JsonObject messages)
+                return (false, "Your configuration has no Messages section, so there is nothing to refresh.");
+
+            var current = new MinecraftFirewall.Proxy.Messages.MessagesOptions();
+            string updated = original;
+            var refreshed = new List<string>();
+            var keptTheirOwn = new List<string>();
+
+            foreach ((string key, JsonNode? node) in messages.ToArray())
+            {
+                if (node?.GetValue<string>() is not { } value)
+                    continue;
+
+                if (current.GetType().GetProperty(key)?.GetValue(current) is not string latest || latest == value)
+                    continue;
+
+                if (!MessageDefaultHistory.IsAnUneditedDefault(key, value))
+                {
+                    keptTheirOwn.Add(key);
+                    continue;
+                }
+
+                // Spliced over the exact span of the old value, so every comment in the file survives.
+                if (JsonTextSurgery.ReplaceValue(updated, ["Messages", key], JsonSerializer.Serialize(latest)) is { } next)
+                {
+                    updated = next;
+                    refreshed.Add(key);
+                }
+            }
+
+            if (refreshed.Count == 0)
+            {
+                return (true, keptTheirOwn.Count == 0
+                    ? "Every message is already up to date."
+                    : $"Nothing to refresh. {keptTheirOwn.Count} message(s) differ from the defaults because you " +
+                      "wrote them yourself, and those are left alone.");
+            }
+
+            (bool success, string message) = WriteAtomically(original, updated);
+            if (!success)
+                return (false, message);
+
+            string kept = keptTheirOwn.Count == 0
+                ? string.Empty
+                : $" {keptTheirOwn.Count} message(s) you had edited yourself were left untouched.";
+
+            return (true,
+                $"Updated {refreshed.Count} message(s) that were still at an older default: " +
+                $"{string.Join(", ", refreshed)}.{kept} Restart the protection service for players to see them.");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
     public (bool Success, string Message) AddMissingSections()
     {
         try

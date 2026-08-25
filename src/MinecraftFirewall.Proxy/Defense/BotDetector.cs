@@ -108,6 +108,31 @@ public sealed class BotDetector : IDisposable
     /// Returns only the signals that survive without a connection to hang them on: what is remembered
     /// about the address, rather than what this particular moment looks like.
     /// </summary>
+    /// <summary>
+    /// Records a username that was tried, and returns how many different ones this address has used
+    /// lately.
+    ///
+    /// Separate from <see cref="Assess"/> because an attempt that is refused never reaches it — and a
+    /// refused attempt is exactly the one worth remembering the name of. Without this, an address
+    /// working through a list while being rate-limited would look like an address using one name,
+    /// because every name it tried was thrown away with the connection.
+    ///
+    /// Recorded whether or not bot defence is switched on: this is bookkeeping, not a judgement.
+    /// </summary>
+    public int NoteAttemptedUsername(IPAddress address, string username) =>
+        History(address).RecordUsername(username);
+
+    /// <summary>
+    /// How many different usernames this address has been seen using lately, without recording
+    /// anything.
+    ///
+    /// This is what separates one impatient person from something working through a list. A player
+    /// mashing reconnect produces one name however fast they do it; an address trying many names is
+    /// doing something a player cannot.
+    /// </summary>
+    public int DistinctRecentUsernames(IPAddress address) =>
+        _histories.TryGetValue(address, out ClientHistory? history) ? history.DistinctUsernames : 0;
+
     public IReadOnlyList<BotSignal> Explain(IPAddress address)
     {
         if (!_options.Enabled || IPAddress.IsLoopback(address) || !_histories.TryGetValue(address, out ClientHistory? history))
@@ -281,6 +306,11 @@ public sealed class BotDetector : IDisposable
                 while (_connections.Count > MaxRememberedConnections)
                     _connections.Dequeue();
             }
+        }
+
+        public int DistinctUsernames
+        {
+            get { lock (_gate) return _usernames.Count; }
         }
 
         public void RecordHostnameMismatch(DateTimeOffset now, TimeSpan memory)
