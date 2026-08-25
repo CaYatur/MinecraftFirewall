@@ -365,6 +365,11 @@ public partial class MainWindow : Window
             ChkDdos.IsChecked = _config.GetBool(["DdosProtection", "Enabled"], false);
             ChkInspection.IsChecked = _config.GetBool(["DeepInspection", "Enabled"], false);
             ChkInjection.IsChecked = _config.GetBool(["DeepInspection", "ScanForInjectionPayloads"], false);
+            // Defaults to true when the key is absent, unlike the toggles above it. Those all ship
+            // switched off, so a missing key and "off" mean the same thing; this one ships on, and a
+            // config written before it existed would otherwise show unticked while the service was
+            // happily enforcing it.
+            ChkMalformed.IsChecked = _config.GetBool(["DeepInspection", "RefuseMalformedPackets"], true);
             ChkHoneypot.IsChecked = _config.GetBool(["Honeypot", "Enabled"], false);
             ChkMovement.IsChecked = _config.GetBool(["DeepInspection", "AnalyseMovement"], false);
             ChkMovementKick.IsChecked = _config.GetBool(["DeepInspection", "KickOnMovementAnomaly"], false);

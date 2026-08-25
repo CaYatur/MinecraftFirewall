@@ -37,6 +37,21 @@ public sealed class InspectionOptions
     /// </summary>
     public int MaxServerboundFrameBytes { get; set; } = 256 * 1024;
 
+    /// <summary>
+    /// Whether packets that are structurally impossible are refused.
+    ///
+    /// On by default, because none of what this rejects is a judgement call: an interaction type
+    /// outside the three that exist, a hand that is neither hand, a negative entity id, a coordinate
+    /// that is not a number. A real client has exactly one possible answer in each case, and the
+    /// server would otherwise be the thing that has to survive the wrong one — which is the whole
+    /// argument for doing this in front of it rather than in a plugin behind it.
+    ///
+    /// Only layouts that come out of the generated tables are opened, and a packet whose fields do not
+    /// decode cleanly is forwarded rather than refused. A mod inventing its own traffic is far likelier
+    /// than an attack, and an unverified field offset is never worth a wrong refusal.
+    /// </summary>
+    public bool RefuseMalformedPackets { get; set; } = true;
+
     /// <summary>Largest size a single serverbound frame may decompress to. See
     /// CompressedPacketReader for why the compressed and uncompressed sizes need separate limits.</summary>
     public int MaxServerboundUncompressedBytes { get; set; } = 512 * 1024;

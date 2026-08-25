@@ -632,10 +632,16 @@ public sealed class PlayStateInspector(
             return InspectWrittenText(packet);
         }
 
-        if (packet.PacketId == packetIds.PlayInteractServerbound || packet.PacketId == packetIds.PlaySwingServerbound)
+        if (packet.PacketId == packetIds.PlayInteractServerbound)
         {
             CountAttack();
-            return null;
+            return inspection.RefuseMalformedPackets ? PacketSanitiser.InspectInteract(packet.Fields) : null;
+        }
+
+        if (packet.PacketId == packetIds.PlaySwingServerbound)
+        {
+            CountAttack();
+            return inspection.RefuseMalformedPackets ? PacketSanitiser.InspectSwing(packet.Fields) : null;
         }
 
         return null;

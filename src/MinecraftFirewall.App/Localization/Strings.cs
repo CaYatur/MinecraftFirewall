@@ -88,6 +88,9 @@ public sealed class Strings : INotifyPropertyChanged
         ["VpnProtectedOnly"] = "Block them only for protected usernames (recommended)",
         ["VpnEveryone"] = "Block them for everyone",
 
+        ["ChkMalformed"] =
+            "Refuse packets a real client could not send (bad interaction types, impossible coordinates, " +
+            "trailing bytes) — this is what PacketFixer-style plugins do, but before the server parses them",
         ["NavPlayers"] = "Players",
         ["PlayersHeading"] = "Players this server knows",
         ["PlayersBlurb"] =
@@ -338,6 +341,10 @@ public sealed class Strings : INotifyPropertyChanged
         ["VpnProtectedOnly"] = "Yalnızca korumalı kullanıcı adları için engelle (önerilir)",
         ["VpnEveryone"] = "Herkes için engelle",
 
+        ["ChkMalformed"] =
+            "Gerçek bir istemcinin gönderemeyeceği paketleri reddet (hatalı etkileşim türleri, imkânsız " +
+            "koordinatlar, artık baytlar) — PacketFixer tarzı eklentilerin yaptığı iş, ama sunucu paketi " +
+            "çözümlemeden önce",
         ["NavPlayers"] = "Oyuncular",
         ["PlayersHeading"] = "Bu sunucunun tanıdığı oyuncular",
         ["PlayersBlurb"] =

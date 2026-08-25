@@ -416,6 +416,7 @@
                                 <CheckBox x:Name="ChkDdos" Margin="0,13,0,0" Content="{loc:T ChkDdos}" Click="DefenseToggle_Changed" Tag="DdosProtection/Enabled"/>
                                 <CheckBox x:Name="ChkInspection" Margin="0,10,0,0" Content="{loc:T ChkInspection}" Click="DefenseToggle_Changed" Tag="DeepInspection/Enabled"/>
                                 <CheckBox x:Name="ChkInjection" Margin="0,10,0,0" Content="{loc:T ChkInjection}" Click="DefenseToggle_Changed" Tag="DeepInspection/ScanForInjectionPayloads"/>
+                                <CheckBox x:Name="ChkMalformed" Margin="0,10,0,0" Content="{loc:T ChkMalformed}" Click="DefenseToggle_Changed" Tag="DeepInspection/RefuseMalformedPackets"/>
                             </StackPanel>
                         </Border>
 
