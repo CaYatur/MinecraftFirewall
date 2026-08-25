@@ -421,6 +421,7 @@ public sealed class PlayStateInspector(
         if (parsed is { Kind: CayaDevCheckCommandKind.Login } && PasswordHasher.Verify(parsed.Password, graceAuth.PasswordHash!))
         {
             graceAuth.Entry.LearnIp(remoteAddress, identityOptions.LearnedIpTtl, identityOptions.MaxLearnedIpsPerUsername);
+            graceAuth.Entry.Record(PlayerEventKind.LoggedIn, remoteAddress, "password accepted from a new address", _now());
             policyEngine.RegisterGraceAuthSuccess(remoteAddress, profile.Name, username);
             _isTrusted = true;
             ReleaseHold();
@@ -432,9 +433,51 @@ public sealed class PlayStateInspector(
 
         logger.LogWarning("[{Profile}] authentication FAILED for '{Username}' from {Ip} — the message was not a correct /login.",
             profile.Name, username, remoteAddress);
+        graceAuth.Entry.Record(PlayerEventKind.LoginFailed, remoteAddress, "wrong password, or no login was sent", _now());
         policyEngine.RegisterGraceAuthFailure(remoteAddress, profile.Name, username);
         HadViolation = true;
         DisconnectReason = messages.GraceAuthenticationFailed;
+    }
+
+    /// <summary>
+    /// A player changing their own password from inside the game, by proving the old one first.
+    ///
+    /// The old password is required even though this connection is already trusted. Being trusted here
+    /// means the address is recognised or the session is authenticated, and neither of those is the
+    /// same as knowing the password — a household, a shared flat or a games café all share an address.
+    /// Without the check, sitting down at somebody else's computer would be enough to lock them out of
+    /// their own name.
+    /// </summary>
+    private void HandleChangePassword(CayaDevCheckCommand parsed)
+    {
+        IdentityEntry entry = profile.IdentityStore.GetOrCreate(username);
+
+        if (entry.PasswordHash is null)
+        {
+            SendToPlayer(messages.NoPasswordToChange);
+            return;
+        }
+
+        if (!PasswordHasher.Verify(parsed.CurrentPassword, entry.PasswordHash))
+        {
+            logger.LogWarning("[{Profile}] '{Username}' ({Ip}) failed to change their password: the current one was wrong.",
+                profile.Name, username, remoteAddress);
+            entry.Record(PlayerEventKind.LoginFailed, remoteAddress, "wrong current password on a change attempt", _now());
+            SendToPlayer(messages.CurrentPasswordWrong);
+            return;
+        }
+
+        if (parsed.Password.Length < identityOptions.PasswordMinLength)
+        {
+            SendToPlayer(string.Format(messages.PasswordTooShort, identityOptions.PasswordMinLength));
+            return;
+        }
+
+        entry.PasswordHash = PasswordHasher.Hash(parsed.Password);
+        entry.Record(PlayerEventKind.PasswordChanged, remoteAddress, "changed their password in game", _now());
+
+        logger.LogInformation("[{Profile}] '{Username}' ({Ip}) changed their password.", profile.Name, username, remoteAddress);
+        SendToPlayer(messages.PasswordChanged);
     }
 
     /// <summary>Registration, for a player the server has never seen. Not resolved until they succeed,
@@ -455,6 +498,8 @@ public sealed class PlayStateInspector(
 
         graceAuth!.Entry.PasswordHash = PasswordHasher.Hash(parsed.Password);
         graceAuth.Entry.LearnIp(remoteAddress, identityOptions.LearnedIpTtl, identityOptions.MaxLearnedIpsPerUsername);
+        graceAuth.Entry.RegisteredAt ??= _now();
+        graceAuth.Entry.Record(PlayerEventKind.Registered, remoteAddress, "chose a password", _now());
 
         _graceAuthResolved = true;
         _isTrusted = true;
@@ -501,16 +546,35 @@ public sealed class PlayStateInspector(
 
         switch (parsed.Kind)
         {
+            case CayaDevCheckCommandKind.ChangePassword:
+                HandleChangePassword(parsed);
+                return true;
+
             case CayaDevCheckCommandKind.Register:
                 if (parsed.Password.Length < identityOptions.PasswordMinLength)
                 {
                     logger.LogInformation("[{Profile}] '{Username}' tried to register a password shorter than the minimum.", profile.Name, username);
+                    SendToPlayer(string.Format(messages.PasswordTooShort, identityOptions.PasswordMinLength));
                     return true;
                 }
 
                 var entry = profile.IdentityStore.GetOrCreate(username);
+                bool hadPassword = entry.PasswordHash is not null;
+
+                // Somebody who already has a password has to prove it. They are trusted enough to be
+                // here — recognised address, or already logged in — but "already at the keyboard" is
+                // not the same as "knows the password", and a household shares an address.
+                if (hadPassword)
+                {
+                    SendToPlayer(messages.AlreadyRegistered);
+                    return true;
+                }
+
                 entry.PasswordHash = PasswordHasher.Hash(parsed.Password);
                 entry.LearnIp(remoteAddress, identityOptions.LearnedIpTtl, identityOptions.MaxLearnedIpsPerUsername);
+                entry.RegisteredAt ??= _now();
+                entry.Record(hadPassword ? PlayerEventKind.PasswordChanged : PlayerEventKind.Registered,
+                    remoteAddress, hadPassword ? "changed their password in game" : "chose a password", _now());
                 _isTrusted = true;
                 logger.LogInformation("[{Profile}] '{Username}' registered with CaYaDev-Check from {Ip}.", profile.Name, username, remoteAddress);
                 return true;
@@ -796,6 +860,8 @@ public sealed class PlayStateInspector(
         }
 
         entry.PremiumClaimRequested = new PremiumClaimRequest(_now());
+        entry.Record(PlayerEventKind.PremiumClaimRequested, remoteAddress,
+            "asked for this name to be locked to their Minecraft account", _now());
 
         logger.LogInformation("[{Profile}] '{Username}' ({Ip}) asked for their name to be locked to their Minecraft " +
                               "account. The next login with this name will be challenged once.",

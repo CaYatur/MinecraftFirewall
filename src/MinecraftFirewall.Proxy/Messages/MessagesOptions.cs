@@ -107,6 +107,23 @@ public sealed class MessagesOptions
         "Own this name on a real Minecraft account? Type  premium  instead, and it will be locked to that " +
         "account — no password to remember, and nobody else can ever use the name here.";
 
+    // ---- changing a password in game -------------------------------------------------------------
+
+    public string PasswordChanged { get; set; } =
+        "Your password has been changed. The old one no longer works.";
+
+    public string CurrentPasswordWrong { get; set; } =
+        "That is not your current password, so nothing was changed.";
+
+    public string NoPasswordToChange { get; set; } =
+        "You do not have a password on this server yet. Type  register <password>  to set one.";
+
+    /// <summary>Sent when somebody who already has a password types the register command. Their name
+    /// is not re-registered — being at the keyboard is not the same as knowing the password.</summary>
+    public string AlreadyRegistered { get; set; } =
+        "You already have a password here. To change it, type  changepassword <current> <new>  " +
+        "— you need the current one, even from this computer.";
+
     /// <summary>Sent as the kick reason when a held player starts taking damage. See
     /// IdentityOptions.DisconnectIfDamagedWhileAuthenticating for why a kick is the kindest option
     /// available to something sitting in front of the server rather than inside it.</summary>

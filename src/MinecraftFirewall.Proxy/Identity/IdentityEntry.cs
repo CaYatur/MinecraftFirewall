@@ -2,6 +2,26 @@ using System.Net;
 
 namespace MinecraftFirewall.Proxy.Identity;
 
+/// <summary>What happened to one player, for the per-player history an administrator reads.</summary>
+public enum PlayerEventKind
+{
+    Registered,
+    LoggedIn,
+    LoginFailed,
+    PasswordChanged,
+    PasswordReset,
+    PremiumClaimRequested,
+    PremiumVerified,
+    PremiumVerificationFailed,
+    Denied,
+    Kicked,
+}
+
+/// <summary>One line of a player's history. Deliberately a fixed set of kinds with a short free-text
+/// detail, rather than free-form log lines: an administrator needs to be able to see at a glance that
+/// a name has six failed logins from four addresses, and prose does not answer that.</summary>
+public sealed record PlayerEvent(DateTimeOffset When, PlayerEventKind Kind, string? Address, string Detail);
+
 /// <summary>
 /// One username's identity record. Fields are grouped by the stage that populates them; all of
 /// them live on this single record type (not parallel per-feature stores) so the gate has exactly
@@ -10,8 +30,14 @@ namespace MinecraftFirewall.Proxy.Identity;
 /// </summary>
 public sealed class IdentityEntry
 {
+    /// <summary>How much of a player's history is kept. Bounded for the same reason the learned-IP
+    /// list is: an attacker hammering one name must not be able to make this grow without limit, and
+    /// nobody reads past the last few dozen entries anyway.</summary>
+    private const int MaxEvents = 40;
+
     private readonly Lock _lock = new();
     private readonly List<LearnedIp> _learnedIps = [];
+    private readonly List<PlayerEvent> _events = [];
 
     public required string Username { get; init; }
 
@@ -44,6 +70,78 @@ public sealed class IdentityEntry
     public IReadOnlyList<LearnedIp> LearnedIps
     {
         get { lock (_lock) return _learnedIps.ToArray(); }
+    }
+
+    // ---- what an administrator sees ---------------------------------------------------------------
+    // Written from every connection path and read by the control panel on a poll timer, so all of it
+    // goes through the same lock as the learned-IP list, and for the same reason.
+
+    /// <summary>When this name first set a password. Null for a name that has only ever been declared
+    /// in configuration, or that is locked to a Minecraft account instead.</summary>
+    public DateTimeOffset? RegisteredAt
+    {
+        get { lock (_lock) return _registeredAt; }
+        set { lock (_lock) _registeredAt = value; }
+    }
+
+    public DateTimeOffset? LastSeenAt
+    {
+        get { lock (_lock) return _lastSeenAt; }
+        set { lock (_lock) _lastSeenAt = value; }
+    }
+
+    /// <summary>The address this name last connected from. Kept as text: it is only ever displayed,
+    /// and an address that failed to parse is still worth showing an administrator.</summary>
+    public string? LastAddress
+    {
+        get { lock (_lock) return _lastAddress; }
+        set { lock (_lock) _lastAddress = value; }
+    }
+
+    private DateTimeOffset? _registeredAt;
+    private DateTimeOffset? _lastSeenAt;
+    private string? _lastAddress;
+
+    /// <summary>This name's history, oldest first.</summary>
+    public IReadOnlyList<PlayerEvent> Events
+    {
+        get { lock (_lock) return _events.ToArray(); }
+    }
+
+    /// <summary>Adds one line to this name's history, and moves the last-seen marker with it.</summary>
+    public void Record(PlayerEventKind kind, IPAddress? address, string detail, DateTimeOffset now)
+    {
+        lock (_lock)
+        {
+            _events.Add(new PlayerEvent(now, kind, address?.ToString(), detail));
+            while (_events.Count > MaxEvents)
+                _events.RemoveAt(0);
+
+            _lastSeenAt = now;
+            if (address is not null)
+                _lastAddress = address.ToString();
+        }
+    }
+
+    /// <summary>Restores a history line loaded from disk, without touching the last-seen marker —
+    /// that is restored separately, from what was saved, rather than being reset to now by the act of
+    /// loading it.</summary>
+    public void RestoreEvent(PlayerEvent restored)
+    {
+        lock (_lock)
+        {
+            _events.Add(restored);
+            while (_events.Count > MaxEvents)
+                _events.RemoveAt(0);
+        }
+    }
+
+    /// <summary>Forgets every address this name is trusted from, so the next connection has to prove
+    /// the password again. The static allowlist is untouched: that one comes from appsettings.json,
+    /// and this process does not get to overrule the file an administrator edits.</summary>
+    public void ForgetLearnedIps()
+    {
+        lock (_lock) _learnedIps.Clear();
     }
 
     public bool IsIpRecognized(IPAddress address)

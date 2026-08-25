@@ -88,6 +88,58 @@ public sealed class Strings : INotifyPropertyChanged
         ["VpnProtectedOnly"] = "Block them only for protected usernames (recommended)",
         ["VpnEveryone"] = "Block them for everyone",
 
+        ["NavPlayers"] = "Players",
+        ["PlayersHeading"] = "Players this server knows",
+        ["PlayersBlurb"] =
+            "Everyone who has registered, been locked to a Minecraft account, or been named in your configuration. " +
+            "Pick a server to see its own list. This reads from the running service, so it is live.",
+        ["PlayersServer"] = "Server:",
+        ["PlayersListHeading"] = "Accounts",
+        ["PlayersEmpty"] =
+            "Nobody yet. Names appear here once someone registers, proves a Minecraft account, or is listed under " +
+            "that server's protected usernames.",
+        ["ColPlayer"] = "Name",
+        ["ColStatus"] = "Status",
+        ["ColRegistered"] = "Registered",
+        ["ColLastSeen"] = "Last seen",
+        ["ColLastIp"] = "Last address",
+        ["ColRisk"] = "Risk",
+        ["PlayerSummaryFormat"] =
+            "{0}  ·  registered {1}  ·  last seen {2}  ·  last address {3}  ·  {4} remembered address(es)",
+        ["PlayerRiskHeading"] = "Why this address looks suspicious",
+        ["PlayerRiskTotal"] = "total",
+        ["PlayerNoRisk"] = "  Nothing recorded against this address.",
+        ["PlayerHistoryHeading"] = "This player's history",
+        ["PlayerNoHistory"] = "  Nothing recorded yet.",
+        ["PlayerActionsHeading"] = "Actions",
+        ["PlayerActionsHint"] =
+            "These take effect immediately on the running service. Locking a name to a Minecraft account is the one " +
+            "that does not survive a restart on its own — put it in the server's configuration too.",
+        ["BtnRefresh"] = "Refresh",
+        ["BtnForgetAddresses"] = "Forget remembered addresses",
+        ["BtnResetPassword"] = "Reset password",
+        ["BtnLockPremium"] = "Lock to Minecraft account",
+        ["BtnUnlockPremium"] = "Unlock",
+        ["BtnRemovePlayer"] = "Remove from this server",
+        ["ConfirmTitle"] = "Are you sure?",
+        ["ConfirmForgetAddresses"] =
+            "Forget the addresses '{0}' is trusted from?\n\nThey will have to type their password again the next " +
+            "time they join. Their password itself is not changed.",
+        ["ConfirmResetPassword"] =
+            "Clear the password for '{0}'?\n\nThey will be asked to register again on their next join, and their " +
+            "remembered addresses are cleared too — otherwise the name would simply go to whoever connects next.",
+        ["ConfirmRemovePlayer"] =
+            "Remove everything this server has learned about '{0}'?\n\nTheir password, remembered addresses and " +
+            "history are all forgotten. If the name is also in your configuration file, it comes back from there " +
+            "on the next restart.",
+        ["ConfirmLockPremium"] =
+            "Lock '{0}' to its real Minecraft account?\n\nOnly that account will be able to use the name here, from " +
+            "any address, and it will never be asked for a password. This does NOT survive a restart on its own — " +
+            "add it to the server's configuration as well.",
+        ["ConfirmUnlockPremium"] =
+            "Unlock '{0}'?\n\nAnyone will be able to use the name again, subject to your other settings. If it is " +
+            "set in your configuration file, remove it there too.",
+
         ["FieldIpForwarding"] = "Real player IP addresses",
         ["FieldIpForwardingHint"] =
             "Without this, every player in your server's log and in every plugin is 127.0.0.1, so banning " +
@@ -285,6 +337,57 @@ public sealed class Strings : INotifyPropertyChanged
         ["VpnLogOnly"] = "İzin ver, sadece günlüğe not düş",
         ["VpnProtectedOnly"] = "Yalnızca korumalı kullanıcı adları için engelle (önerilir)",
         ["VpnEveryone"] = "Herkes için engelle",
+
+        ["NavPlayers"] = "Oyuncular",
+        ["PlayersHeading"] = "Bu sunucunun tanıdığı oyuncular",
+        ["PlayersBlurb"] =
+            "Kayıt olmuş, Minecraft hesabına kilitlenmiş veya yapılandırmanızda adı geçen herkes. " +
+            "Kendi listesini görmek için bir sunucu seçin. Bu bilgiler çalışan servisten canlı olarak okunur.",
+        ["PlayersServer"] = "Sunucu:",
+        ["PlayersListHeading"] = "Hesaplar",
+        ["PlayersEmpty"] =
+            "Henüz kimse yok. Biri kayıt olduğunda, bir Minecraft hesabını doğruladığında ya da o sunucunun korumalı " +
+            "kullanıcı adlarında listelendiğinde adlar burada görünür.",
+        ["ColPlayer"] = "Ad",
+        ["ColStatus"] = "Durum",
+        ["ColRegistered"] = "Kayıt",
+        ["ColLastSeen"] = "Son görülme",
+        ["ColLastIp"] = "Son adres",
+        ["ColRisk"] = "Risk",
+        ["PlayerSummaryFormat"] =
+            "{0}  ·  kayıt {1}  ·  son görülme {2}  ·  son adres {3}  ·  {4} hatırlanan adres",
+        ["PlayerRiskHeading"] = "Bu adres neden şüpheli görünüyor",
+        ["PlayerRiskTotal"] = "toplam",
+        ["PlayerNoRisk"] = "  Bu adrese dair kayıtlı bir şey yok.",
+        ["PlayerHistoryHeading"] = "Bu oyuncunun geçmişi",
+        ["PlayerNoHistory"] = "  Henüz kayıt yok.",
+        ["PlayerActionsHeading"] = "İşlemler",
+        ["PlayerActionsHint"] =
+            "Bunlar çalışan serviste anında etkili olur. Bir adı Minecraft hesabına kilitlemek, tek başına yeniden " +
+            "başlatmadan sağ çıkmayan tek işlemdir — sunucunun yapılandırmasına da ekleyin.",
+        ["BtnRefresh"] = "Yenile",
+        ["BtnForgetAddresses"] = "Hatırlanan adresleri unut",
+        ["BtnResetPassword"] = "Şifreyi sıfırla",
+        ["BtnLockPremium"] = "Minecraft hesabına kilitle",
+        ["BtnUnlockPremium"] = "Kilidi kaldır",
+        ["BtnRemovePlayer"] = "Bu sunucudan kaldır",
+        ["ConfirmTitle"] = "Emin misiniz?",
+        ["ConfirmForgetAddresses"] =
+            "'{0}' oyuncusunun güvenilen adresleri unutulsun mu?\n\nBir sonraki girişinde şifresini yeniden yazması " +
+            "gerekecek. Şifresi değiştirilmez.",
+        ["ConfirmResetPassword"] =
+            "'{0}' oyuncusunun şifresi silinsin mi?\n\nBir sonraki girişinde yeniden kayıt olması istenecek ve " +
+            "hatırlanan adresleri de temizlenecek — aksi hâlde ad, sıradaki bağlanana kalırdı.",
+        ["ConfirmRemovePlayer"] =
+            "Bu sunucunun '{0}' hakkında öğrendiği her şey kaldırılsın mı?\n\nŞifresi, hatırlanan adresleri ve " +
+            "geçmişi unutulur. Ad yapılandırma dosyanızda da varsa, yeniden başlatmada oradan geri gelir.",
+        ["ConfirmLockPremium"] =
+            "'{0}' gerçek Minecraft hesabına kilitlensin mi?\n\nBu adı burada yalnızca o hesap kullanabilir, hangi " +
+            "adresten olursa olsun, ve asla şifre sorulmaz. Bu ayar tek başına yeniden başlatmadan sağ çıkmaz — " +
+            "sunucunun yapılandırmasına da ekleyin.",
+        ["ConfirmUnlockPremium"] =
+            "'{0}' kilidi kaldırılsın mı?\n\nDiğer ayarlarınıza bağlı olarak adı yeniden herkes kullanabilir. " +
+            "Yapılandırma dosyanızda ayarlıysa oradan da kaldırın.",
 
         ["FieldIpForwarding"] = "Oyuncuların gerçek IP adresleri",
         ["FieldIpForwardingHint"] =

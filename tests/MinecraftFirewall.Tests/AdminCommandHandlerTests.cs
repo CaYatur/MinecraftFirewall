@@ -37,7 +37,7 @@ public class AdminCommandHandlerTests
 
         var handler = new AdminCommandHandler([profile], banService, refreshService, DefenseTestFactory.CreateGovernor(),
             DefenseTestFactory.CreateThreatIntelligence(), DefenseTestFactory.CreateAnomalyDetector(),
-            NullLogger<AdminCommandHandler>.Instance);
+            DefenseTestFactory.CreateBotDetector(), NullLogger<AdminCommandHandler>.Instance);
         return new Fixture(handler, profile, banService, gateway);
     }
 

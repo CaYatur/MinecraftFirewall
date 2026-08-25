@@ -98,6 +98,58 @@ public sealed class BotDetector : IDisposable
     public void RecordAnomaly(IPAddress address, int weight) =>
         History(address).AnomalyWeight = weight;
 
+    /// <summary>
+    /// What is currently held against an address, without treating the question as a connection.
+    ///
+    /// Assess both scores and records — it notes the connection, the username and the cadence,
+    /// because that is what it is for. The control panel asks this several times a minute on a poll
+    /// timer, and asking through Assess would mean the panel being open was itself evidence of a bot.
+    ///
+    /// Returns only the signals that survive without a connection to hang them on: what is remembered
+    /// about the address, rather than what this particular moment looks like.
+    /// </summary>
+    public IReadOnlyList<BotSignal> Explain(IPAddress address)
+    {
+        if (!_options.Enabled || IPAddress.IsLoopback(address) || !_histories.TryGetValue(address, out ClientHistory? history))
+            return [];
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        var signals = new List<BotSignal>(4);
+
+        int mismatches = history.RecentHostnameMismatches(now, _options.HostnameMismatchMemory);
+        if (mismatches > 0)
+        {
+            signals.Add(new BotSignal("hostname-mismatch", _options.WeightHostnameMismatch,
+                $"{mismatches} connection(s) in the last {Describe(_options.HostnameMismatchMemory)} announced a domain this server does not serve"));
+        }
+
+        if (history.AbandonedHandshakes >= 3)
+        {
+            signals.Add(new BotSignal("scanner-behaviour", _options.WeightScannerBehaviour,
+                $"{history.AbandonedHandshakes} handshakes from this address ended without a login"));
+        }
+
+        if (history.CadenceCoefficientOfVariation(_options.CadenceSamples) is { } cv && cv < _options.MechanicalCadenceThreshold)
+        {
+            signals.Add(new BotSignal("mechanical-cadence", _options.WeightMechanicalCadence,
+                $"reconnect intervals vary by only {cv:P0} — too even for a person"));
+        }
+
+        if (history.AnomalyWeight > 0)
+        {
+            signals.Add(new BotSignal("anomaly-history", history.AnomalyWeight,
+                "the anomaly model has repeatedly flagged connections from this address"));
+        }
+
+        if (_threatIntelligence.Action == ThreatListAction.Score && _threatIntelligence.IsOnImportedList(address))
+        {
+            signals.Add(new BotSignal("on-threat-list", _threatIntelligence.ScoreWeight,
+                "this address appears on an imported public threat list"));
+        }
+
+        return signals;
+    }
+
     public BotAssessment Assess(IPAddress address, string username, int protocolVersion, bool protocolKnown, DateTimeOffset now)
     {
         if (!_options.Enabled || IPAddress.IsLoopback(address))

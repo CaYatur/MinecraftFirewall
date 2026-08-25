@@ -106,3 +106,27 @@ public sealed class CheckRow(CheckResult result)
 
     public CheckVerdict Verdict => result.Verdict;
 }
+
+/// <summary>
+/// One player as the Players grid shows them.
+///
+/// Every field is already formatted for display. The grid binds directly to these, and pushing the
+/// formatting down here keeps "what a null last-seen looks like" in one place rather than spread
+/// across six column templates.
+/// </summary>
+public sealed class PlayerRow
+{
+    public required string Username { get; init; }
+    public required string Status { get; init; }
+    public required string Registered { get; init; }
+    public required string LastSeen { get; init; }
+    public required string LastAddress { get; init; }
+    public required int Risk { get; init; }
+
+    /// <summary>Blank rather than "0" when there is nothing against them. A zero in a risk column
+    /// reads as a measurement; blank reads as "nothing to say", which is what it means.</summary>
+    public string RiskLabel => Risk > 0 ? Risk.ToString() : "";
+
+    public static string When(DateTimeOffset? value) =>
+        value is { } at ? at.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "\u2014";
+}

@@ -44,7 +44,7 @@ public class AdminPipeServerIntegrationTests
         var refreshService = new IpListRefreshService(new VpnIntelligence(), vpnIntelOptions, new UnreachableHttpClientFactory(), NullLogger<IpListRefreshService>.Instance);
         return new AdminCommandHandler([profile], banService, refreshService, DefenseTestFactory.CreateGovernor(),
             DefenseTestFactory.CreateThreatIntelligence(), DefenseTestFactory.CreateAnomalyDetector(),
-            NullLogger<AdminCommandHandler>.Instance);
+            DefenseTestFactory.CreateBotDetector(), NullLogger<AdminCommandHandler>.Instance);
     }
 
     [Fact]

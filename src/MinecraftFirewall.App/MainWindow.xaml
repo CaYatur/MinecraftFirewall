@@ -39,6 +39,7 @@
                     <RadioButton x:Name="NavServers"  Style="{StaticResource NavButton}" Content="{loc:T NavServers}"  Checked="Nav_Checked" Tag="Servers"/>
                     <RadioButton x:Name="NavSecurity" Style="{StaticResource NavButton}" Content="{loc:T NavSecurity}" Checked="Nav_Checked" Tag="Security"/>
                     <RadioButton x:Name="NavDefense" Style="{StaticResource NavButton}" Content="{loc:T NavDefense}" Checked="Nav_Checked" Tag="Defense"/>
+                    <RadioButton x:Name="NavPlayers"  Style="{StaticResource NavButton}" Content="{loc:T NavPlayers}"  Checked="Nav_Checked" Tag="Players"/>
                     <RadioButton x:Name="NavBans"     Style="{StaticResource NavButton}" Content="{loc:T NavBans}"     Checked="Nav_Checked" Tag="Bans"/>
                     <RadioButton x:Name="NavLog"      Style="{StaticResource NavButton}" Content="{loc:T NavLog}"      Checked="Nav_Checked" Tag="Log"/>
                     <RadioButton x:Name="NavSettings" Style="{StaticResource NavButton}" Content="{loc:T NavSettings}" Checked="Nav_Checked" Tag="Settings"/>
@@ -203,6 +204,109 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
+                    </StackPanel>
+
+
+                    <!-- ===================== PLAYERS ===================== -->
+                    <StackPanel x:Name="PagePlayers" Visibility="Collapsed">
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T PlayersHeading}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T PlayersBlurb}" TextWrapping="Wrap"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                                    <TextBlock Text="{loc:T PlayersServer}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                    <ComboBox x:Name="PlayerProfileBox" MinWidth="240" SelectionChanged="PlayerProfile_Changed"/>
+                                    <Button Content="{loc:T BtnRefresh}" Click="BtnRefreshPlayers_Click" Margin="10,0,0,0"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T PlayersListHeading}"/>
+                                <TextBlock x:Name="PlayersEmptyText" Style="{StaticResource Muted}" Text="{loc:T PlayersEmpty}"
+                                           TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                <!-- An ItemsControl of clickable rows rather than a DataGrid. WPF's
+                                     DataGrid brings its own chrome, painted in system colours, and
+                                     this app is dark — the same mismatch that once made the VPN
+                                     dropdown unreadable. The rest of the panel is built this way and
+                                     it needs no theming to match. -->
+                                <Grid Margin="0,14,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="1.4*"/>
+                                        <ColumnDefinition Width="1.6*"/>
+                                        <ColumnDefinition Width="1.2*"/>
+                                        <ColumnDefinition Width="1.2*"/>
+                                        <ColumnDefinition Width="1.2*"/>
+                                        <ColumnDefinition Width="0.6*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Style="{StaticResource FieldLabel}" Text="{loc:T ColPlayer}"/>
+                                    <TextBlock Grid.Column="1" Style="{StaticResource FieldLabel}" Text="{loc:T ColStatus}"/>
+                                    <TextBlock Grid.Column="2" Style="{StaticResource FieldLabel}" Text="{loc:T ColRegistered}"/>
+                                    <TextBlock Grid.Column="3" Style="{StaticResource FieldLabel}" Text="{loc:T ColLastSeen}"/>
+                                    <TextBlock Grid.Column="4" Style="{StaticResource FieldLabel}" Text="{loc:T ColLastIp}"/>
+                                    <TextBlock Grid.Column="5" Style="{StaticResource FieldLabel}" Text="{loc:T ColRisk}"/>
+                                </Grid>
+
+                                <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl x:Name="PlayerList">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Button Click="PlayerRow_Click" Tag="{Binding}" HorizontalContentAlignment="Stretch"
+                                                        Padding="10,7" Margin="0,0,0,3" Cursor="Hand">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="1.4*"/>
+                                                            <ColumnDefinition Width="1.6*"/>
+                                                            <ColumnDefinition Width="1.2*"/>
+                                                            <ColumnDefinition Width="1.2*"/>
+                                                            <ColumnDefinition Width="1.2*"/>
+                                                            <ColumnDefinition Width="0.6*"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Grid.Column="0" Text="{Binding Username}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Grid.Column="1" Text="{Binding Status}" Style="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Grid.Column="2" Text="{Binding Registered}" Style="{StaticResource Muted}"/>
+                                                        <TextBlock Grid.Column="3" Text="{Binding LastSeen}" Style="{StaticResource Muted}"/>
+                                                        <TextBlock Grid.Column="4" Text="{Binding LastAddress}" Style="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Grid.Column="5" Text="{Binding RiskLabel}" Foreground="{StaticResource Warn}" FontWeight="SemiBold"/>
+                                                    </Grid>
+                                                </Button>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </StackPanel>
+                        </Border>
+
+                        <Border x:Name="PlayerDetailCard" Style="{StaticResource Card}" Visibility="Collapsed">
+                            <StackPanel>
+                                <TextBlock x:Name="PlayerDetailName" Style="{StaticResource H2}"/>
+                                <TextBlock x:Name="PlayerDetailSummary" Style="{StaticResource Muted}" TextWrapping="Wrap"/>
+
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T PlayerRiskHeading}" Margin="0,16,0,0"/>
+                                <TextBlock x:Name="PlayerRiskScope" Style="{StaticResource Muted}" TextWrapping="Wrap" FontSize="11.5"/>
+                                <Border Style="{StaticResource Console}" Margin="0,8,0,0">
+                                    <TextBlock x:Name="PlayerRiskText" Style="{StaticResource ConsoleText}" Text="—"/>
+                                </Border>
+
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T PlayerHistoryHeading}" Margin="0,16,0,0"/>
+                                <Border Style="{StaticResource Console}" Margin="0,8,0,0">
+                                    <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto">
+                                        <TextBlock x:Name="PlayerHistoryText" Style="{StaticResource ConsoleText}" Text="—"/>
+                                    </ScrollViewer>
+                                </Border>
+
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T PlayerActionsHeading}" Margin="0,16,0,0"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T PlayerActionsHint}" TextWrapping="Wrap"/>
+                                <WrapPanel Margin="0,10,0,0">
+                                    <Button x:Name="BtnForgetAddresses" Content="{loc:T BtnForgetAddresses}" Click="BtnForgetAddresses_Click" Margin="0,0,8,8"/>
+                                    <Button x:Name="BtnResetPassword"   Content="{loc:T BtnResetPassword}"   Click="BtnResetPassword_Click"   Margin="0,0,8,8"/>
+                                    <Button x:Name="BtnLockPremium"     Content="{loc:T BtnLockPremium}"     Click="BtnLockPremium_Click"     Margin="0,0,8,8"/>
+                                    <Button x:Name="BtnUnlockPremium"   Content="{loc:T BtnUnlockPremium}"   Click="BtnUnlockPremium_Click"   Margin="0,0,8,8"/>
+                                    <Button x:Name="BtnRemovePlayer"    Content="{loc:T BtnRemovePlayer}"    Click="BtnRemovePlayer_Click"    Margin="0,0,8,8"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
 
                     <!-- ===================== SECURITY CHECK ===================== -->

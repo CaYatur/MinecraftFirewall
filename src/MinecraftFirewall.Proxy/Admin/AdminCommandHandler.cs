@@ -22,8 +22,14 @@ public sealed class AdminCommandHandler(
     ConnectionGovernor governor,
     ThreatIntelligence threatIntelligence,
     AnomalyDetector anomalyDetector,
+    BotDetector botDetector,
     ILogger<AdminCommandHandler> logger)
 {
+    /// <summary>The per-player half of this surface. Separate because its replies are JSON for the
+    /// control panel rather than prose for a terminal, and mixing the two in one class would make it
+    /// unclear which commands a person is expected to read the output of.</summary>
+    private readonly PlayerAdmin _players = new(profiles, botDetector);
+
     private const string NotPersistedNote =
         "NOTE: this change is in-memory only and will NOT survive a service restart. " +
         "To make it permanent, add it under that profile's ProtectedUsernames in appsettings.json.";
@@ -58,6 +64,12 @@ public sealed class AdminCommandHandler(
                 "list-profiles" => ListProfiles(),
                 "defense-status" => DefenseStatus(),
                 "list-threats" => ListThreats(request.Args),
+                "list-players" => _players.List(request.Args),
+                "player-info" => _players.Info(request.Args),
+                "reset-password" => Mutate(_players.ResetPassword(request.Args), request),
+                "forget-addresses" => Mutate(_players.ForgetAddresses(request.Args), request),
+                "remove-player" => Mutate(_players.Remove(request.Args), request),
+                "set-premium" => Mutate(_players.SetPremium(request.Args), request),
                 "help" or "" => Help(),
                 _ => new AdminResponse(false, $"Unknown command '{request.Command}'. " + Help().Message),
             };
@@ -217,6 +229,22 @@ public sealed class AdminCommandHandler(
         return new AdminResponse(true, string.Join('\n', lines));
     }
 
+    /// <summary>Logs a mutating player command before returning its reply.
+    ///
+    /// Every one of these changes who can use a name on this server, and the panel that issues them is
+    /// two clicks deep. A log line is the only thing that makes an accidental one recoverable, or a
+    /// deliberate one attributable.</summary>
+    private AdminResponse Mutate(AdminResponse response, AdminRequest request)
+    {
+        if (response.Success)
+        {
+            logger.LogWarning("Admin: {Command} {Args}", request.Command,
+                string.Join(' ', request.Args.Take(2)));
+        }
+
+        return response;
+    }
+
     private static AdminResponse Help() => new(true,
         "Commands:\n" +
         "  whitelist-add-me <profile> <username> <ip-or-cidr>  Add an IP/CIDR to a username's static allowlist\n" +
@@ -226,7 +254,13 @@ public sealed class AdminCommandHandler(
         "  reload                                               Refresh the VPN/datacenter IP lists now\n" +
         "  list-profiles                                       List configured server profiles\n" +
         "  defense-status                                      Live admission-control and threat-list counters\n" +
-        "  list-threats [count]                                Addresses caught on this machine's honeypot ports");
+        "  list-threats [count]                                Addresses caught on this machine's honeypot ports\n" +
+        "  list-players <profile>                              Every name this server knows (JSON, for the control panel)\n" +
+        "  player-info <profile> <username>                    One name in full: history, addresses, risk (JSON)\n" +
+        "  reset-password <profile> <username>                 Clear a password so they register again\n" +
+        "  forget-addresses <profile> <username>               Forget their trusted addresses; next join must log in\n" +
+        "  remove-player <profile> <username>                  Forget everything learned about a name\n" +
+        "  set-premium <profile> <username> <true|false>       Lock or unlock a name to its Minecraft account");
 
     private bool TryFindProfile(string name, out ServerProfile profile, out string? error)
     {

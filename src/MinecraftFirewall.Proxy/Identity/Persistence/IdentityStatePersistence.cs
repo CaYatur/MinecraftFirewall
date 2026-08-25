@@ -10,11 +10,24 @@ public sealed record PersistedLearnedIp(
     [property: JsonPropertyName("ip")] string Ip,
     [property: JsonPropertyName("expiresAt")] long ExpiresAtUnixSeconds);
 
+public sealed record PersistedPlayerEvent(
+    [property: JsonPropertyName("at")] DateTimeOffset When,
+    [property: JsonPropertyName("kind")] string Kind,
+    [property: JsonPropertyName("ip")] string? Address,
+    [property: JsonPropertyName("detail")] string Detail);
+
 public sealed record PersistedIdentityEntry(
     [property: JsonPropertyName("username")] string Username,
     [property: JsonPropertyName("passwordHash")] string? PasswordHash,
     [property: JsonPropertyName("pinnedUuid")] Guid? PinnedUuid,
-    [property: JsonPropertyName("learnedIps")] List<PersistedLearnedIp> LearnedIps);
+    [property: JsonPropertyName("learnedIps")] List<PersistedLearnedIp> LearnedIps,
+    // Added after the first release, so every one of these is optional: a file written by an older
+    // build has to keep loading, and the only cost of a missing field is a player whose history
+    // starts from this upgrade.
+    [property: JsonPropertyName("registeredAt")] DateTimeOffset? RegisteredAt = null,
+    [property: JsonPropertyName("lastSeenAt")] DateTimeOffset? LastSeenAt = null,
+    [property: JsonPropertyName("lastIp")] string? LastAddress = null,
+    [property: JsonPropertyName("events")] List<PersistedPlayerEvent>? Events = null);
 
 public sealed record PersistedProfile(
     [property: JsonPropertyName("profile")] string ProfileName,
@@ -51,7 +64,8 @@ public sealed class IdentityStatePersistence(ILogger<IdentityStatePersistence> l
     {
         var entries = profile.IdentityStore.All()
             // Nothing learned yet — persisting it would just be a config echo.
-            .Where(entry => entry.PasswordHash is not null || entry.PinnedUuid is not null || entry.LearnedIps.Count > 0)
+            .Where(entry => entry.PasswordHash is not null || entry.PinnedUuid is not null ||
+                            entry.LearnedIps.Count > 0 || entry.Events.Count > 0)
             .OrderBy(entry => entry.Username, StringComparer.OrdinalIgnoreCase)
             .Select(entry => new PersistedIdentityEntry(
                 entry.Username,
@@ -59,7 +73,11 @@ public sealed class IdentityStatePersistence(ILogger<IdentityStatePersistence> l
                 entry.PinnedUuid,
                 [.. entry.LearnedIps
                     .OrderBy(ip => ip.Address.ToString(), StringComparer.Ordinal)
-                    .Select(ip => new PersistedLearnedIp(ip.Address.ToString(), ip.ExpiresAtUnixSeconds))]))
+                    .Select(ip => new PersistedLearnedIp(ip.Address.ToString(), ip.ExpiresAtUnixSeconds))],
+                entry.RegisteredAt,
+                entry.LastSeenAt,
+                entry.LastAddress,
+                [.. entry.Events.Select(e => new PersistedPlayerEvent(e.When, e.Kind.ToString(), e.Address, e.Detail))]))
             .ToList();
 
         return new PersistedProfile(profile.Name, entries);
@@ -118,6 +136,18 @@ public sealed class IdentityStatePersistence(ILogger<IdentityStatePersistence> l
                 {
                     if (IPAddress.TryParse(learned.Ip, out var address))
                         entry.RestoreLearnedIp(address, learned.ExpiresAtUnixSeconds);
+                }
+
+                // Restored as it was saved, not as of now: the whole point of a "last seen" is that it
+                // is a fact about the past, and a restart is not a sighting.
+                entry.RegisteredAt ??= persistedEntry.RegisteredAt;
+                entry.LastSeenAt ??= persistedEntry.LastSeenAt;
+                entry.LastAddress ??= persistedEntry.LastAddress;
+
+                foreach (var saved in persistedEntry.Events ?? [])
+                {
+                    if (Enum.TryParse(saved.Kind, out PlayerEventKind kind))
+                        entry.RestoreEvent(new PlayerEvent(saved.When, kind, saved.Address, saved.Detail));
                 }
 
                 restored++;

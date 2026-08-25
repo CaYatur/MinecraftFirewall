@@ -13,9 +13,14 @@ public enum CayaDevCheckCommandKind
 
     /// <summary>The player confirmed. Arms a claim; the next connection using this name is challenged.</summary>
     PremiumLockConfirm,
+
+    /// <summary>A player changing their own password, in game, by proving the old one first.</summary>
+    ChangePassword,
 }
 
-public sealed record CayaDevCheckCommand(CayaDevCheckCommandKind Kind, string Password);
+/// <summary>A parsed command. <paramref name="Password"/> is the new password for a change, and
+/// <paramref name="CurrentPassword"/> the one being proved — empty for every other kind.</summary>
+public sealed record CayaDevCheckCommand(CayaDevCheckCommandKind Kind, string Password, string CurrentPassword = "");
 
 /// <summary>
 /// Parses the CaYaDev-Check self-service commands. These only ever arrive via Minecraft's
@@ -42,6 +47,11 @@ public static class CayaDevCheckCommandParser
                 : new CayaDevCheckCommand(CayaDevCheckCommandKind.PremiumLockAsk, "");
         }
 
+        // Three tokens and a change-password verb: old password, then new. Matched before the
+        // "cayadevcheck register x" form below, which is also three tokens.
+        if (parts.Length == 3 && IsChangePasswordVerb(parts[0]))
+            return new CayaDevCheckCommand(CayaDevCheckCommandKind.ChangePassword, parts[2], parts[1]);
+
         if (parts.Length == 2)
         {
             if (parts[0].Equals("register", StringComparison.OrdinalIgnoreCase))
@@ -63,6 +73,11 @@ public static class CayaDevCheckCommandParser
         return new CayaDevCheckCommand(CayaDevCheckCommandKind.None, "");
     }
 
+    private static bool IsChangePasswordVerb(string token) =>
+        token.Equals("changepassword", StringComparison.OrdinalIgnoreCase) ||
+        token.Equals("changepass", StringComparison.OrdinalIgnoreCase) ||
+        token.Equals("passwd", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>True for any recognized CaYaDev-Check command form, used to redact chat text before
     /// logging even when parsing didn't fully succeed (e.g. wrong argument count) — a near-miss typo
     /// of a password command must never end up in a log file either.</summary>
@@ -71,6 +86,7 @@ public static class CayaDevCheckCommandParser
         string first = commandText.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
         return first.Equals("register", StringComparison.OrdinalIgnoreCase) ||
                first.Equals("login", StringComparison.OrdinalIgnoreCase) ||
+               IsChangePasswordVerb(first) ||
                first.Equals("premium", StringComparison.OrdinalIgnoreCase) ||
                first.Equals("cayadevcheck", StringComparison.OrdinalIgnoreCase) ||
                first.Equals("cdc", StringComparison.OrdinalIgnoreCase);

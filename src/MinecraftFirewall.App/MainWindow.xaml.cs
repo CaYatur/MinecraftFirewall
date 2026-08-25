@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -133,6 +134,7 @@ public partial class MainWindow : Window
         PageServers.Visibility = Show(page == "Servers");
         PageSecurity.Visibility = Show(page == "Security");
         PageDefense.Visibility = Show(page == "Defense");
+        PagePlayers.Visibility = Show(page == "Players");
         PageBans.Visibility = Show(page == "Bans");
         PageLog.Visibility = Show(page == "Log");
         PageSettings.Visibility = Show(page == "Settings");
@@ -141,6 +143,9 @@ public partial class MainWindow : Window
 
         if (page == "Bans")
             _ = RefreshBansAsync();
+
+        if (page == "Players")
+            _ = RefreshPlayersAsync();
 
         if (page == "Defense")
         {
@@ -763,5 +768,251 @@ public partial class MainWindow : Window
         ToastText.Text = message;
         ToastRail.Fill = ok ? (Brush)FindResource("Good") : (Brush)FindResource("Bad");
         ToastBar.Visibility = Visibility.Visible;
+    }
+
+    // ------------------------------------------------------------------ players
+    //
+    // Everything here goes through the service's admin pipe rather than through the identity file on
+    // disk. The service owns that state while it is running, and two writers to one file is how a
+    // password reset gets silently undone by the next periodic save.
+
+    private string? _selectedPlayer;
+
+    /// <summary>Fills the server list, then loads that server's players. Called on every visit to the
+    /// page rather than once, because a server can be added while the panel is open.</summary>
+    private async Task RefreshPlayersAsync()
+    {
+        AdminResponse profiles = await _pipe.ListProfilesAsync();
+        if (!profiles.Success)
+        {
+            PlayersEmptyText.Text = profiles.Message;
+            PlayersEmptyText.Visibility = Visibility.Visible;
+            PlayerList.ItemsSource = null;
+            PlayerDetailCard.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        string[] names =
+        [
+            .. profiles.Message
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(line => line.Split(':')[0].Trim())
+                .Where(name => name.Length > 0),
+        ];
+
+        if (!names.SequenceEqual(PlayerProfileBox.Items.Cast<object>().Select(i => i?.ToString() ?? "")))
+        {
+            object? previous = PlayerProfileBox.SelectedItem;
+            PlayerProfileBox.ItemsSource = names;
+            PlayerProfileBox.SelectedItem = previous is string kept && names.Contains(kept)
+                ? kept
+                : names.FirstOrDefault();
+        }
+
+        await LoadPlayersAsync();
+    }
+
+    private async Task LoadPlayersAsync()
+    {
+        if (PlayerProfileBox.SelectedItem is not string profile)
+            return;
+
+        AdminResponse response = await _pipe.SendAsync("list-players", [profile]);
+        if (!response.Success)
+        {
+            PlayerList.ItemsSource = null;
+            PlayersEmptyText.Text = response.Message;
+            PlayersEmptyText.Visibility = Visibility.Visible;
+            return;
+        }
+
+        List<PlayerRow> rows = ParsePlayers(response.Message);
+
+        PlayerList.ItemsSource = rows;
+        PlayersEmptyText.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        PlayersEmptyText.Text = Strings.Current["PlayersEmpty"];
+
+        // Whoever was open stays open. Closing the detail pane on every refresh would make it unusable
+        // the moment anything changed underneath it.
+        if (_selectedPlayer is null || rows.All(r => r.Username != _selectedPlayer))
+        {
+            _selectedPlayer = null;
+            PlayerDetailCard.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private static List<PlayerRow> ParsePlayers(string json)
+    {
+        var rows = new List<PlayerRow>();
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            foreach (JsonElement element in document.RootElement.EnumerateArray())
+            {
+                rows.Add(new PlayerRow
+                {
+                    Username = element.GetProperty("username").GetString() ?? "",
+                    Status = element.GetProperty("status").GetString() ?? "",
+                    Registered = PlayerRow.When(ReadTime(element, "registeredAt")),
+                    LastSeen = PlayerRow.When(ReadTime(element, "lastSeenAt")),
+                    LastAddress = element.GetProperty("lastIp").GetString() ?? "\u2014",
+                    Risk = element.GetProperty("risk").GetInt32(),
+                });
+            }
+        }
+        catch (JsonException)
+        {
+            // A reply this cannot read is a reply from a service of a different version. An empty list
+            // and a visible "nothing here" is a far better outcome than a crashed control panel.
+        }
+
+        return rows;
+    }
+
+    private static DateTimeOffset? ReadTime(JsonElement element, string name) =>
+        element.TryGetProperty(name, out JsonElement value) && value.ValueKind is not JsonValueKind.Null
+            ? value.GetDateTimeOffset()
+            : null;
+
+    private void PlayerProfile_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (PlayerList is null)
+            return; // fires during InitializeComponent
+
+        _selectedPlayer = null;
+        _ = LoadPlayersAsync();
+    }
+
+    private void BtnRefreshPlayers_Click(object sender, RoutedEventArgs e) => _ = RefreshPlayersAsync();
+
+    private void PlayerRow_Click(object sender, RoutedEventArgs e)
+    {
+        if (((Button)sender).Tag is not PlayerRow row)
+            return;
+
+        _selectedPlayer = row.Username;
+        _ = LoadPlayerDetailAsync(row.Username);
+    }
+
+    private async Task LoadPlayerDetailAsync(string username)
+    {
+        if (PlayerProfileBox.SelectedItem is not string profile)
+            return;
+
+        AdminResponse response = await _pipe.SendAsync("player-info", [profile, username]);
+        if (!response.Success)
+        {
+            PlayerDetailCard.Visibility = Visibility.Collapsed;
+            Toast(response.Message, ok: false);
+            return;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(response.Message);
+            JsonElement detail = document.RootElement;
+
+            PlayerDetailName.Text = detail.GetProperty("username").GetString();
+            PlayerDetailSummary.Text = string.Format(
+                Strings.Current["PlayerSummaryFormat"],
+                detail.GetProperty("status").GetString(),
+                PlayerRow.When(ReadTime(detail, "registeredAt")),
+                PlayerRow.When(ReadTime(detail, "lastSeenAt")),
+                detail.GetProperty("lastIp").GetString() ?? "\u2014",
+                detail.GetProperty("learnedIps").GetArrayLength());
+
+            PlayerRiskScope.Text = detail.GetProperty("riskScope").GetString();
+            PlayerRiskText.Text = DescribeRisks(detail);
+            PlayerHistoryText.Text = DescribeHistory(detail);
+
+            bool premium = detail.GetProperty("premiumRequired").GetBoolean();
+            BtnLockPremium.IsEnabled = !premium;
+            BtnUnlockPremium.IsEnabled = premium;
+            BtnResetPassword.IsEnabled = detail.GetProperty("hasPassword").GetBoolean();
+
+            PlayerDetailCard.Visibility = Visibility.Visible;
+        }
+        catch (JsonException)
+        {
+            PlayerDetailCard.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>The weighted reasons an address looks suspicious, written the way the log writes them
+    /// so the two can be compared line for line.</summary>
+    private static string DescribeRisks(JsonElement detail)
+    {
+        JsonElement[] risks = [.. detail.GetProperty("risks").EnumerateArray()];
+        if (risks.Length == 0)
+            return Strings.Current["PlayerNoRisk"];
+
+        var lines = risks
+            .Select(r => $"  {r.GetProperty("name").GetString(),-22} +{r.GetProperty("weight").GetInt32(),-4} {r.GetProperty("detail").GetString()}")
+            .ToList();
+
+        lines.Add("");
+        lines.Add($"  {Strings.Current["PlayerRiskTotal"],-22} {detail.GetProperty("riskTotal").GetInt32()}");
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string DescribeHistory(JsonElement detail)
+    {
+        JsonElement[] events = [.. detail.GetProperty("events").EnumerateArray()];
+        if (events.Length == 0)
+            return Strings.Current["PlayerNoHistory"];
+
+        return string.Join(Environment.NewLine, events.Select(e =>
+            $"{PlayerRow.When(e.GetProperty("at").GetDateTimeOffset())}  " +
+            $"{e.GetProperty("kind").GetString(),-24} " +
+            $"{e.GetProperty("ip").GetString() ?? "",-16} {e.GetProperty("detail").GetString()}"));
+    }
+
+    // ---- the actions ---------------------------------------------------------------------------------
+    //
+    // Every one of these changes who can use a name, so every one asks first. A panel gives no room
+    // for the paragraph of explanation the command-line replies carry, so the confirmation carries the
+    // short version and the reply that follows carries the rest.
+
+    private void BtnForgetAddresses_Click(object sender, RoutedEventArgs e) =>
+        _ = RunPlayerActionAsync("forget-addresses", "ConfirmForgetAddresses");
+
+    private void BtnResetPassword_Click(object sender, RoutedEventArgs e) =>
+        _ = RunPlayerActionAsync("reset-password", "ConfirmResetPassword");
+
+    private void BtnRemovePlayer_Click(object sender, RoutedEventArgs e) =>
+        _ = RunPlayerActionAsync("remove-player", "ConfirmRemovePlayer");
+
+    private void BtnLockPremium_Click(object sender, RoutedEventArgs e) =>
+        _ = RunPlayerActionAsync("set-premium", "ConfirmLockPremium", "true");
+
+    private void BtnUnlockPremium_Click(object sender, RoutedEventArgs e) =>
+        _ = RunPlayerActionAsync("set-premium", "ConfirmUnlockPremium", "false");
+
+    private async Task RunPlayerActionAsync(string command, string confirmKey, string? extra = null)
+    {
+        if (PlayerProfileBox.SelectedItem is not string profile || _selectedPlayer is not { } username)
+            return;
+
+        MessageBoxResult answer = MessageBox.Show(
+            string.Format(Strings.Current[confirmKey], username),
+            Strings.Current["ConfirmTitle"], MessageBoxButton.YesNo, MessageBoxImage.Warning);
+
+        if (answer != MessageBoxResult.Yes)
+            return;
+
+        string[] args = extra is null ? [profile, username] : [profile, username, extra];
+        AdminResponse response = await _pipe.SendAsync(command, args);
+
+        Toast(response.Message, response.Success);
+
+        if (command == "remove-player" && response.Success)
+            _selectedPlayer = null;
+
+        await LoadPlayersAsync();
+
+        if (_selectedPlayer is { } still)
+            await LoadPlayerDetailAsync(still);
     }
 }
