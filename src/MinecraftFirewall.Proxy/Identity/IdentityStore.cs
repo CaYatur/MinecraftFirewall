@@ -14,4 +14,8 @@ public sealed class IdentityStore
 
     public IdentityEntry GetOrCreate(string username) =>
         _entries.GetOrAdd(username, name => new IdentityEntry { Username = name });
+
+    /// <summary>Snapshot of every entry, for the persistence layer. A ConcurrentDictionary enumerates
+    /// safely against concurrent writes, and the copy keeps callers from holding the live collection.</summary>
+    public IReadOnlyList<IdentityEntry> All() => _entries.Values.ToArray();
 }

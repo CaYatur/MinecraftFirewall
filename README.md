@@ -54,9 +54,16 @@ current status. What's implemented right now:
   name, and there is no fallback to any weaker check: if verification fails, or the feature is switched
   off in config, the name is denied outright rather than dropping back to password/IP.
 
-**Not implemented (designed for, never built):** identity-store persistence — see the honesty note
-below, it has a real consequence for premium names; ban-expiry persistence across restarts; and Discord
-webhook alerts (everything currently goes to the log file and console).
+- **Persistent identity store** — self-registered passwords, learned IPs, and premium UUID pins
+  survive a service restart (`C:\ProgramData\MinecraftFirewall\identity-store.json`, written with
+  inheritance disabled and access limited to Administrators, SYSTEM, and the service's own account,
+  since it holds password hashes). Admin-declared settings (`AllowedIps`, `RequirePremium`) are
+  deliberately *not* stored there — `appsettings.json` stays their single source of truth, so removing
+  a name from config really does remove it.
+
+**Not implemented (designed for, never built):** ban-expiry persistence across restarts (an active OS
+firewall rule survives, but the app forgets when to lift it), and Discord webhook alerts (everything
+currently goes to the log file and console).
 
 **Verified end-to-end, not just with synthetic unit tests:** the compiled service was run against a
 real local Paper server, driven through the proxy's public port by a real protocol-correct client. This
@@ -70,13 +77,14 @@ protocol-correct implementation, not a mock, but it is still this project's own 
 
 - This is defense-in-depth for a server that must stay `online-mode=false`. It does not replace Mojang
   authentication.
-- **Nothing the app learns at runtime survives a restart.** There is no on-disk identity store. That
-  means a restart drops self-registered CaYaDev-Check passwords, learned IPs, **and the UUID a premium
-  name is pinned to.** The `RequirePremium` flag itself is safe (it lives in `appsettings.json`, so the
-  name stays protected), but the specific account binding is re-claimed by whoever next passes
-  verification. In practice the real owner reclaims it the moment they reconnect — but if you are
-  relying on the pin, restart deliberately, not casually. This is the top item in `docs/plan.md`'s
-  remaining-work list.
+- **The identity store holds password hashes — treat the file accordingly.** It is written with
+  restrictive ACLs automatically, but it will end up in any backup or disk image you take of the
+  machine. Hashes are PBKDF2, not plaintext, so this is not an emergency — just don't hand the file
+  around. Deleting it resets every self-registration and un-pins every premium name (they get
+  re-claimed by whoever next passes verification), so it is not a "safe to clear" cache.
+- **Firewall bans still don't survive a restart.** If the service restarts while an IP has an active
+  Windows Firewall block rule, the OS rule keeps blocking — no security regression — but the app
+  forgets its expiry and will never lift it. Remove such a rule by hand if you need it gone.
 - **The premium *positive* path has not been verified against a real Microsoft account.** The denial
   path is confirmed end-to-end against a live server (a cracked client is challenged, checked against
   Mojang, denied, and receives a correctly-encrypted kick), the AES-CFB8 implementation is verified

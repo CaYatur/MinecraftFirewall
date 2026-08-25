@@ -270,14 +270,36 @@
 **All four planned stages are now complete.** What remains is not stage work — it is three gaps that
 were designed for in this document but never built, plus one honest verification limit:
 
-1. **Identity-store persistence** (named in the "Project structure" section below as "persisted across
-   restarts", never implemented). `IdentityStore` is in-memory only. This now matters more than it did
-   before Stage 4: **an unpersisted `PinnedUuid` means a service restart un-claims every premium name**,
-   so the next connection to pass verification — anyone, not necessarily the original owner — claims it
-   again. `RequirePremium` itself survives a restart (it's in `appsettings.json`), so the name stays
-   *protected*; it is the specific account binding that is lost. Self-registered CaYaDev-Check
-   passwords and learned IPs are lost on restart for the same reason. **This is the highest-value
-   remaining item.**
+1. ~~**Identity-store persistence**~~ — **done** (`Identity/Persistence/`). Runtime-learned state now
+   survives restarts: self-registered CaYaDev-Check password hashes, learned IPs, and premium UUID
+   pins. This mattered most for Stage 4 — an unpersisted `PinnedUuid` meant every restart un-claimed
+   every premium name, letting the next connection to pass verification (anyone, not necessarily the
+   original owner) re-claim it.
+   - **Only runtime-learned state is stored. Admin-declared fields deliberately are not** — the static
+     allowlist and `RequirePremium` stay owned by `appsettings.json`, because persisting them would
+     mean removing a name from config no longer removes it, with a stale cache quietly overriding the
+     file the admin edited. It also keeps the Admin CLI's "does not survive a restart" warnings
+     truthful: `whitelist-add-me` and `require-premium` write exactly those config-domain fields.
+   - **Learned IPs restore their original absolute expiry**, via a `RestoreLearnedIp` distinct from
+     `LearnIp`. Reusing `LearnIp` would recompute expiry from "now", silently renewing every learned
+     IP's TTL on each restart and turning a bounded 30-day trust window into a permanent one for
+     anyone who restarts regularly.
+   - **Change detection compares serialized output** rather than threading a dirty flag through every
+     mutation site. Serializing a few hundred records every 30s costs nothing measurable and cannot
+     silently miss a mutation — and what would go missing here is precisely the state protecting a
+     username. Writes are temp-file + atomic replace, so a crash mid-write leaves the previous good
+     file rather than a truncated one.
+   - **A real bug the tests caught:** the file holds PBKDF2 hashes and `C:\ProgramData` is
+     world-readable, so the DACL is protected and narrowed — but restricting it to Administrators +
+     SYSTEM *only* locks an unelevated service out of its own store after the first save (a
+     deployment the README explicitly supports), silently ending persistence. The ACL now also grants
+     the account the service actually runs as: elevated that resolves to administrators only,
+     unelevated it's the service account plus administrators, and in neither case any other local user.
+   - **Live-verified across a real restart:** registered a user through the proxy, hard-killed the
+     service, restarted it (`Restored 1 identity record(s)`), then reconnected from an *unlearned* IP
+     — wrong password was correctly kicked (proving the entry was really restored and gated, not just
+     absent), and the correct password authenticated and re-learned the IP. The PBKDF2 hash round-trips
+     and verifies.
 2. **Ban-expiry persistence.** `FirewallBanService._activeBans` is in-memory, so a restart while an IP
    has a live Windows Firewall block rule loses that ban's expiry — the OS rule keeps blocking (no
    security regression) but nothing will ever clean it up. Pre-existing since Stage 1; already spun

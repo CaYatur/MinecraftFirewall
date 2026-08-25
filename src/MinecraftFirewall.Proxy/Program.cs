@@ -2,6 +2,7 @@ using MinecraftFirewall.Proxy;
 using MinecraftFirewall.Proxy.Admin;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity;
+using MinecraftFirewall.Proxy.Identity.Persistence;
 using MinecraftFirewall.Proxy.Identity.Premium;
 using MinecraftFirewall.Proxy.IpIntel;
 using MinecraftFirewall.Proxy.Messages;
@@ -27,6 +28,7 @@ builder.Services.Configure<DangerousCommandOptions>(builder.Configuration.GetSec
 builder.Services.Configure<MessagesOptions>(builder.Configuration.GetSection(MessagesOptions.SectionName));
 builder.Services.Configure<IpInfoOptions>(builder.Configuration.GetSection(IpInfoOptions.SectionName));
 builder.Services.Configure<PremiumOptions>(builder.Configuration.GetSection(PremiumOptions.SectionName));
+builder.Services.Configure<IdentityPersistenceOptions>(builder.Configuration.GetSection(IdentityPersistenceOptions.SectionName));
 
 builder.Services.AddHttpClient();
 
@@ -54,6 +56,13 @@ builder.Services.AddSingleton<IReadOnlyList<ServerProfile>>(profiles);
 // directly for the `reload` command.
 builder.Services.AddSingleton<IpListRefreshService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<IpListRefreshService>());
+
+// Registered BEFORE ProxyHostService so its StartAsync (which loads the persisted store) runs first —
+// hosted services start in registration order, and a connection must never be evaluated against a
+// half-loaded identity store.
+builder.Services.AddSingleton<IdentityStatePersistence>();
+builder.Services.AddHostedService<IdentityPersistenceService>();
+
 builder.Services.AddHostedService<ProxyHostService>();
 
 builder.Services.AddSingleton<AdminCommandHandler>();

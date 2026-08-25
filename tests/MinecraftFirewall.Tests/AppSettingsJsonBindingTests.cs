@@ -1,5 +1,6 @@
 using MinecraftFirewall.Proxy;
 using MinecraftFirewall.Proxy.Enforcement;
+using MinecraftFirewall.Proxy.Identity.Persistence;
 using MinecraftFirewall.Proxy.Identity.Premium;
 using MinecraftFirewall.Proxy.IpIntel;
 using MinecraftFirewall.Proxy.Messages;
@@ -76,6 +77,22 @@ public class AppSettingsJsonBindingTests
         Assert.NotNull(config.GetSection(MessagesOptions.SectionName).Get<MessagesOptions>());
         Assert.NotNull(config.GetSection(IpInfoOptions.SectionName).Get<IpInfoOptions>());
         Assert.NotNull(config.GetSection(PremiumOptions.SectionName).Get<PremiumOptions>());
+        Assert.NotNull(config.GetSection(IdentityPersistenceOptions.SectionName).Get<IdentityPersistenceOptions>());
+    }
+
+    [Fact]
+    public void AppSettingsJson_IdentityPersistence_ShipsEnabledWithAUsablePath()
+    {
+        // Shipping this disabled would silently un-claim every premium name on restart, so it's on by
+        // default and the path has to actually be rooted somewhere writable, not left blank.
+        var config = LoadConfiguration();
+        var persistence = config.GetSection(IdentityPersistenceOptions.SectionName).Get<IdentityPersistenceOptions>();
+
+        Assert.NotNull(persistence);
+        Assert.True(persistence!.Enabled);
+        Assert.False(string.IsNullOrWhiteSpace(persistence.FilePath));
+        Assert.True(Path.IsPathRooted(persistence.FilePath));
+        Assert.True(persistence.SaveInterval > TimeSpan.Zero);
     }
 
     [Fact]

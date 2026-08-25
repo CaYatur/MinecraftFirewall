@@ -83,6 +83,25 @@ public sealed class IdentityEntry
     }
 
     /// <summary>
+    /// Restores a learned IP with its ORIGINAL absolute expiry, for loading a persisted store at
+    /// startup. Distinct from <see cref="LearnIp"/> on purpose: that one computes expiry from "now",
+    /// so reusing it here would silently renew every learned IP's TTL on every service restart —
+    /// turning a 30-day trust window into an unbounded one for anyone who restarts regularly.
+    /// Already-expired entries are dropped rather than restored.
+    /// </summary>
+    public void RestoreLearnedIp(IPAddress address, long expiresAtUnixSeconds)
+    {
+        if (expiresAtUnixSeconds <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+            return;
+
+        lock (_lock)
+        {
+            _learnedIps.RemoveAll(ip => ip.Address.Equals(address));
+            _learnedIps.Add(new LearnedIp(address, expiresAtUnixSeconds));
+        }
+    }
+
+    /// <summary>
     /// Records a successful CaYaDev-Check authentication's IP as trusted for future connections.
     /// TTL-capped and count-capped (oldest-expiring evicted first) so a single account can't
     /// accumulate an unbounded, permanent list of trusted IPs — every entry ages out eventually.
