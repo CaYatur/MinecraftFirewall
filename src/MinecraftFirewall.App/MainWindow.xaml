@@ -1,46 +1,51 @@
 <Window x:Class="MinecraftFirewall.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="MinecraftFirewall" Height="700" Width="1000" MinHeight="560" MinWidth="860"
-        Background="{StaticResource Bg}" WindowStartupLocation="CenterScreen">
+        xmlns:loc="clr-namespace:MinecraftFirewall.App.Localization"
+        Title="MinecraftFirewall" Height="760" Width="1120" MinHeight="620" MinWidth="940"
+        Background="{StaticResource BgWash}" WindowStartupLocation="CenterScreen">
 
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="214"/>
+            <ColumnDefinition Width="228"/>
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <!-- Sidebar -->
-        <Border Grid.Column="0" Background="{StaticResource BgSidebar}">
+        <!-- ===================== SIDEBAR ===================== -->
+        <Border Grid.Column="0" Background="{StaticResource BgSidebar}" BorderBrush="{StaticResource BorderSoft}" BorderThickness="0,0,1,0">
             <DockPanel>
-                <StackPanel DockPanel.Dock="Top" Margin="20,22,20,18">
-                    <TextBlock Text="MinecraftFirewall" FontSize="16" FontWeight="SemiBold"/>
-                    <TextBlock x:Name="VersionText" Style="{StaticResource Muted}" Margin="0,3,0,0"/>
+                <StackPanel DockPanel.Dock="Top" Margin="20,24,20,20">
+                    <TextBlock FontSize="17" FontWeight="Bold">
+                        <Run Text="MINECRAFT" Foreground="#F4F3F5"/><Run Text="FIREWALL" Foreground="#E11D2A"/>
+                    </TextBlock>
+                    <TextBlock x:Name="TaglineText" Style="{StaticResource Muted}" FontSize="11.5" Margin="0,3,0,0"
+                               Text="{loc:T AppTagline}"/>
                 </StackPanel>
 
-                <!-- Status pill, pinned to the bottom so it's visible from every page -->
-                <Border DockPanel.Dock="Bottom" Margin="16,0,16,16" CornerRadius="8" Padding="12,10"
-                        Background="#111F35" BorderBrush="{StaticResource Border}" BorderThickness="1">
+                <Border DockPanel.Dock="Bottom" Margin="14,0,14,14" CornerRadius="3" Padding="13,11"
+                        Background="#12070A" BorderBrush="#3A1620" BorderThickness="1">
                     <StackPanel>
                         <StackPanel Orientation="Horizontal">
                             <Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="{StaticResource TextMuted}"
                                      VerticalAlignment="Center" Margin="0,0,8,0"/>
-                            <TextBlock x:Name="StatusText" Text="Checking…" FontWeight="SemiBold" FontSize="13"/>
+                            <TextBlock x:Name="StatusText" FontWeight="SemiBold" FontSize="13" Text="…"/>
                         </StackPanel>
-                        <TextBlock x:Name="StatusDetail" Style="{StaticResource Muted}" Margin="0,5,0,0"/>
+                        <TextBlock x:Name="StatusDetail" Style="{StaticResource Muted}" FontSize="11.5" Margin="0,5,0,0"/>
                     </StackPanel>
                 </Border>
 
-                <StackPanel DockPanel.Dock="Top">
-                    <RadioButton x:Name="NavStatus"   Style="{StaticResource NavButton}" Content="Status"    IsChecked="True" Checked="Nav_Checked" Tag="Status"/>
-                    <RadioButton x:Name="NavBans"     Style="{StaticResource NavButton}" Content="Blocked IPs" Checked="Nav_Checked" Tag="Bans"/>
-                    <RadioButton x:Name="NavSettings" Style="{StaticResource NavButton}" Content="Settings"  Checked="Nav_Checked" Tag="Settings"/>
-                    <RadioButton x:Name="NavLog"      Style="{StaticResource NavButton}" Content="Activity log" Checked="Nav_Checked" Tag="Log"/>
+                <StackPanel DockPanel.Dock="Top" Margin="0,4,0,0">
+                    <RadioButton x:Name="NavStatus"   Style="{StaticResource NavButton}" Content="{loc:T NavStatus}"   IsChecked="True" Checked="Nav_Checked" Tag="Status"/>
+                    <RadioButton x:Name="NavServers"  Style="{StaticResource NavButton}" Content="{loc:T NavServers}"  Checked="Nav_Checked" Tag="Servers"/>
+                    <RadioButton x:Name="NavSecurity" Style="{StaticResource NavButton}" Content="{loc:T NavSecurity}" Checked="Nav_Checked" Tag="Security"/>
+                    <RadioButton x:Name="NavBans"     Style="{StaticResource NavButton}" Content="{loc:T NavBans}"     Checked="Nav_Checked" Tag="Bans"/>
+                    <RadioButton x:Name="NavLog"      Style="{StaticResource NavButton}" Content="{loc:T NavLog}"      Checked="Nav_Checked" Tag="Log"/>
+                    <RadioButton x:Name="NavSettings" Style="{StaticResource NavButton}" Content="{loc:T NavSettings}" Checked="Nav_Checked" Tag="Settings"/>
                 </StackPanel>
             </DockPanel>
         </Border>
 
-        <!-- Content -->
+        <!-- ===================== CONTENT ===================== -->
         <Grid Grid.Column="1">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
@@ -48,141 +53,265 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <Border Grid.Row="0" Padding="26,20,26,14">
-                <TextBlock x:Name="PageTitle" Text="Status" Style="{StaticResource H1}"/>
+            <Border Grid.Row="0" Padding="28,22,28,14">
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Width="3" Height="24" Fill="{StaticResource Accent}" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                    <TextBlock x:Name="PageTitle" Style="{StaticResource H1}" VerticalAlignment="Center"/>
+                </StackPanel>
             </Border>
 
-            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="26,0,26,0">
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="28,0,28,0">
                 <Grid>
 
-                    <!-- ======================= STATUS ======================= -->
+                    <!-- ===================== STATUS ===================== -->
                     <StackPanel x:Name="PageStatus">
-
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Text="Protection service" Style="{StaticResource H2}"/>
-                                <TextBlock Style="{StaticResource Muted}"
-                                           Text="The proxy runs as a Windows service, so it keeps protecting your server after a reboot even when nobody is logged in. This window is only its control panel — closing it does not stop protection."/>
-
-                                <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                                    <Button x:Name="BtnStart"     Style="{StaticResource PrimaryButton}" Content="Start"   Click="BtnStart_Click"   Margin="0,0,8,0"/>
-                                    <Button x:Name="BtnStop"      Content="Stop"     Click="BtnStop_Click"    Margin="0,0,8,0"/>
-                                    <Button x:Name="BtnInstall"   Content="Install service"  Click="BtnInstall_Click"  Margin="0,0,8,0"/>
-                                    <Button x:Name="BtnUninstall" Content="Remove service"   Click="BtnUninstall_Click"/>
-                                </StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T ProtectionTitle}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T ProtectionBlurb}"/>
+                                <WrapPanel Margin="0,15,0,0">
+                                    <Button x:Name="BtnStart"     Style="{StaticResource PrimaryButton}" Content="{loc:T BtnStart}" Click="BtnStart_Click" Margin="0,0,8,8"/>
+                                    <Button x:Name="BtnStop"      Content="{loc:T BtnStop}"      Click="BtnStop_Click"      Margin="0,0,8,8"/>
+                                    <Button x:Name="BtnInstall"   Content="{loc:T BtnInstall}"   Click="BtnInstall_Click"   Margin="0,0,8,8"/>
+                                    <Button x:Name="BtnUninstall" Content="{loc:T BtnUninstall}" Click="BtnUninstall_Click" Margin="0,0,8,8"/>
+                                </WrapPanel>
                             </StackPanel>
                         </Border>
 
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Text="Servers being protected" Style="{StaticResource H2}"/>
-                                <TextBlock x:Name="ProfilesText" Style="{StaticResource Muted}" FontFamily="Consolas" FontSize="12.5"
-                                           Text="Connecting to the service…"/>
-                                <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                                    <Button Content="Edit configuration" Click="BtnEditConfig_Click" Margin="0,0,8,0"/>
-                                    <Button Content="Refresh VPN lists now" Click="BtnReloadLists_Click"/>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T QuickCheckTitle}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T QuickCheckBlurb}"/>
+                                <StackPanel x:Name="QuickCheckSummary" Orientation="Horizontal" Margin="0,13,0,0">
+                                    <Ellipse x:Name="QuickCheckDot" Width="9" Height="9" Fill="{StaticResource TextMuted}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBlock x:Name="QuickCheckText" Text="—" FontWeight="SemiBold"/>
                                 </StackPanel>
+                                <Button Content="{loc:T BtnRunCheck}" Click="BtnRunCheck_Click" HorizontalAlignment="Left" Margin="0,13,0,0"/>
                             </StackPanel>
                         </Border>
 
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Text="Recent activity" Style="{StaticResource H2}"/>
-                                <Border Background="#0B1220" CornerRadius="6" Padding="12" BorderBrush="{StaticResource Border}" BorderThickness="1">
-                                    <TextBlock x:Name="MiniLogText" FontFamily="Consolas" FontSize="11.5"
-                                               Foreground="{StaticResource TextMuted}" TextWrapping="NoWrap" Text="…"/>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T ServersTitle}"/>
+                                <Border Style="{StaticResource Console}">
+                                    <TextBlock x:Name="ProfilesText" Style="{StaticResource ConsoleText}" Text="…"/>
+                                </Border>
+                                <WrapPanel Margin="0,14,0,0">
+                                    <Button Content="{loc:T BtnManageServers}" Click="BtnGoServers_Click" Margin="0,0,8,0"/>
+                                    <Button Content="{loc:T BtnRefreshLists}"  Click="BtnReloadLists_Click"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T RecentTitle}"/>
+                                <Border Style="{StaticResource Console}">
+                                    <TextBlock x:Name="MiniLogText" Style="{StaticResource ConsoleText}" Text="…"/>
                                 </Border>
                             </StackPanel>
                         </Border>
                     </StackPanel>
 
-                    <!-- ======================= BANS ======================= -->
+                    <!-- ===================== SERVERS ===================== -->
+                    <StackPanel x:Name="PageServers" Visibility="Collapsed">
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T ServersHeading}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T ServersBlurb}"/>
+                                <WrapPanel Margin="0,14,0,0">
+                                    <Button Content="{loc:T BtnAddServer}"      Click="BtnAddServer_Click" Margin="0,0,8,0"/>
+                                    <Button Content="{loc:T BtnSaveAndRestart}" Style="{StaticResource PrimaryButton}" Click="BtnSaveServers_Click"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <ItemsControl x:Name="ServerList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Style="{StaticResource Card}">
+                                        <StackPanel>
+                                            <Grid Margin="0,0,0,14">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0">
+                                                    <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T FieldName}"/>
+                                                    <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" FontWeight="SemiBold"/>
+                                                </StackPanel>
+                                                <Button Grid.Column="1" Content="{loc:T BtnRemoveServer}" Click="BtnRemoveServer_Click"
+                                                        Tag="{Binding}" VerticalAlignment="Bottom" Margin="12,0,0,0"/>
+                                            </Grid>
+
+                                            <Grid Margin="0,0,0,14">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="14"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="14"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Grid.Column="0">
+                                                    <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T FieldPublicPort}"/>
+                                                    <TextBox Text="{Binding PublicPort, UpdateSourceTrigger=PropertyChanged}"/>
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="2">
+                                                    <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T FieldBackendHost}"/>
+                                                    <TextBox Text="{Binding BackendHost, UpdateSourceTrigger=PropertyChanged}"/>
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="4">
+                                                    <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T FieldBackendPort}"/>
+                                                    <TextBox Text="{Binding BackendPort, UpdateSourceTrigger=PropertyChanged}"/>
+                                                </StackPanel>
+                                            </Grid>
+
+                                            <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T FieldProtectedNames}"/>
+                                            <TextBlock Style="{StaticResource Muted}" Margin="0,0,0,6" Text="{loc:T ProtectedNamesBlurb}"/>
+                                            <TextBox Text="{Binding ProtectedNamesText, UpdateSourceTrigger=PropertyChanged}"
+                                                     AcceptsReturn="True" MinHeight="66" TextWrapping="NoWrap"
+                                                     VerticalScrollBarVisibility="Auto" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12"
+                                                     Margin="0,0,0,14"/>
+
+                                            <TextBlock Style="{StaticResource FieldLabel}" Text="{loc:T FieldAllowedDomains}"/>
+                                            <TextBox Text="{Binding AllowedHostnamesText, UpdateSourceTrigger=PropertyChanged}"
+                                                     AcceptsReturn="True" MinHeight="48" TextWrapping="NoWrap"
+                                                     VerticalScrollBarVisibility="Auto" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12"/>
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <!-- ===================== SECURITY CHECK ===================== -->
+                    <StackPanel x:Name="PageSecurity" Visibility="Collapsed">
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T LeakHeading}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T LeakBlurb}"/>
+                                <Button Content="{loc:T BtnRunCheck}" Style="{StaticResource PrimaryButton}"
+                                        Click="BtnRunCheck_Click" HorizontalAlignment="Left" Margin="0,15,0,0"/>
+                            </StackPanel>
+                        </Border>
+
+                        <ItemsControl x:Name="CheckResultList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Style="{StaticResource Card}" Padding="16" Margin="0,0,0,10">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0" Width="4" CornerRadius="2" Margin="0,2,14,2"
+                                                    Background="{Binding VerdictBrush}"/>
+                                            <StackPanel Grid.Column="1">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="{Binding VerdictLabel}" Margin="10,0,0,0"
+                                                               Foreground="{Binding VerdictBrush}" FontWeight="SemiBold" FontSize="12"/>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding Detail}" Style="{StaticResource Muted}"/>
+                                                <Border Background="#1A0F13" BorderBrush="#3A1620" BorderThickness="1" CornerRadius="3"
+                                                        Padding="11,8" Margin="0,9,0,0" Visibility="{Binding FixVisibility}">
+                                                    <TextBlock Text="{Binding Fix}" Style="{StaticResource Muted}" Foreground="#E8B4BC"/>
+                                                </Border>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <!-- ===================== BANS ===================== -->
                     <StackPanel x:Name="PageBans" Visibility="Collapsed">
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Text="Currently blocked" Style="{StaticResource H2}"/>
-                                <TextBlock Style="{StaticResource Muted}"
-                                           Text="IPs blocked after repeated failed logins, dangerous commands, or VPN policy. Each has an expiry and is lifted automatically. Loopback and your local network can never be blocked."/>
-                                <Border Background="#0B1220" CornerRadius="6" Padding="12" Margin="0,12,0,0"
-                                        BorderBrush="{StaticResource Border}" BorderThickness="1">
-                                    <TextBlock x:Name="BansText" FontFamily="Consolas" FontSize="12" Text="…"/>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T BansHeading}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T BansBlurb}"/>
+                                <Border Style="{StaticResource Console}" Margin="0,13,0,0">
+                                    <TextBlock x:Name="BansText" Style="{StaticResource ConsoleText}" FontSize="12" Text="…"/>
                                 </Border>
-                                <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                                    <TextBox x:Name="UnbanIpBox" Width="190" Padding="8,6" Margin="0,0,8,0"
-                                             Background="#0B1220" Foreground="{StaticResource Text}"
-                                             BorderBrush="{StaticResource Border}" BorderThickness="1"
-                                             FontFamily="Consolas" VerticalContentAlignment="Center"
-                                             ToolTip="IP address to unblock"/>
-                                    <Button Content="Unblock this IP" Click="BtnUnban_Click" Margin="0,0,8,0"/>
-                                    <Button Content="Refresh" Click="BtnRefreshBans_Click"/>
-                                </StackPanel>
+                                <WrapPanel Margin="0,14,0,0">
+                                    <TextBox x:Name="UnbanIpBox" Width="200" Margin="0,0,8,0"
+                                             FontFamily="Cascadia Mono, Consolas, monospace" VerticalContentAlignment="Center"/>
+                                    <Button Content="{loc:T BtnUnban}"   Click="BtnUnban_Click" Margin="0,0,8,0"/>
+                                    <Button Content="{loc:T BtnRefresh}" Click="BtnRefreshBans_Click"/>
+                                </WrapPanel>
                             </StackPanel>
                         </Border>
                     </StackPanel>
 
-                    <!-- ======================= SETTINGS ======================= -->
-                    <StackPanel x:Name="PageSettings" Visibility="Collapsed">
-
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Text="Protection at startup" Style="{StaticResource H2}"/>
-                                <TextBlock Style="{StaticResource Muted}"
-                                           Text="This is the setting that decides whether your server is protected. It applies to the background service and works with nobody logged in."/>
-                                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                                    <RadioButton x:Name="StartAuto"   GroupName="StartMode" Content="Start automatically with Windows  (recommended)"
-                                                 Foreground="{StaticResource Text}" FontSize="13" Margin="0,0,0,0" Checked="StartMode_Changed"/>
-                                </StackPanel>
-                                <RadioButton x:Name="StartManual" GroupName="StartMode" Content="Only start when I press Start"
-                                             Foreground="{StaticResource Text}" FontSize="13" Margin="0,8,0,0" Checked="StartMode_Changed"/>
-                            </StackPanel>
-                        </Border>
-
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Text="This window" Style="{StaticResource H2}"/>
-                                <TextBlock Style="{StaticResource Muted}"
-                                           Text="Convenience only — these do not affect whether your server is protected."/>
-                                <CheckBox x:Name="ChkLoginStartup" Margin="0,12,0,6"
-                                          Content="Open this control panel when I log in"
-                                          Click="StartupPreference_Changed"/>
-                                <CheckBox x:Name="ChkStartMinimised"
-                                          Content="Start minimised to the notification area"
-                                          Click="StartupPreference_Changed"/>
-                                <CheckBox x:Name="ChkCloseToTray" Margin="0,6,0,0" IsChecked="True"
-                                          Content="Closing this window keeps it in the notification area"/>
-                            </StackPanel>
-                        </Border>
-
-                        <Border Style="{StaticResource Card}">
-                            <StackPanel>
-                                <TextBlock Text="Files" Style="{StaticResource H2}"/>
-                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                    <Button Content="Open configuration file" Click="BtnEditConfig_Click" Margin="0,0,8,0"/>
-                                    <Button Content="Open log folder" Click="BtnOpenLogs_Click"/>
-                                </StackPanel>
-                                <TextBlock Style="{StaticResource Muted}" Margin="0,12,0,0"
-                                           Text="Changes to the configuration file take effect when the service restarts. The Status page will tell you when a restart is needed."/>
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-
-                    <!-- ======================= LOG ======================= -->
+                    <!-- ===================== LOG ===================== -->
                     <StackPanel x:Name="PageLog" Visibility="Collapsed">
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
-                                <TextBlock Text="Service log" Style="{StaticResource H2}"/>
-                                <Border Background="#0B1220" CornerRadius="6" Padding="12"
-                                        BorderBrush="{StaticResource Border}" BorderThickness="1">
-                                    <ScrollViewer x:Name="LogScroller" Height="380" VerticalScrollBarVisibility="Auto"
-                                                  HorizontalScrollBarVisibility="Auto">
-                                        <TextBlock x:Name="FullLogText" FontFamily="Consolas" FontSize="11.5"
-                                                   Foreground="{StaticResource TextMuted}" TextWrapping="NoWrap"/>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T LogHeading}"/>
+                                <Border Style="{StaticResource Console}">
+                                    <ScrollViewer x:Name="LogScroller" Height="400" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                                        <TextBlock x:Name="FullLogText" Style="{StaticResource ConsoleText}"/>
                                     </ScrollViewer>
                                 </Border>
-                                <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                                    <Button Content="Open log folder" Click="BtnOpenLogs_Click" Margin="0,0,8,0"/>
-                                    <CheckBox x:Name="ChkAutoScroll" Content="Follow new lines" IsChecked="True" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                <WrapPanel Margin="0,14,0,0">
+                                    <Button Content="{loc:T BtnOpenLogFolder}" Click="BtnOpenLogs_Click" Margin="0,0,12,0"/>
+                                    <CheckBox x:Name="ChkAutoScroll" Content="{loc:T ChkFollow}" IsChecked="True" VerticalAlignment="Center"/>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- ===================== SETTINGS ===================== -->
+                    <StackPanel x:Name="PageSettings" Visibility="Collapsed">
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T SettingsLanguageTitle}"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                    <RadioButton x:Name="LangEn" GroupName="Lang" Content="English" Margin="0,0,22,0" Checked="Language_Changed" Tag="en"/>
+                                    <RadioButton x:Name="LangTr" GroupName="Lang" Content="Türkçe" Checked="Language_Changed" Tag="tr"/>
                                 </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T SettingsProtectionTitle}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T SettingsProtectionBlurb}"/>
+                                <RadioButton x:Name="StartAuto"   GroupName="StartMode" Content="{loc:T StartAuto}"   Margin="0,13,0,0" Checked="StartMode_Changed"/>
+                                <RadioButton x:Name="StartManual" GroupName="StartMode" Content="{loc:T StartManual}" Margin="0,9,0,0"  Checked="StartMode_Changed"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T SettingsPremiumTitle}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T SettingsPremiumBlurb}"/>
+                                <CheckBox x:Name="ChkAutoPremium" Margin="0,13,0,0" Content="{loc:T ChkAutoPremium}" Click="AutoPremium_Changed"/>
+                                <Border Background="#1A0F13" BorderBrush="#3A1620" BorderThickness="1" CornerRadius="3" Padding="11,9" Margin="0,10,0,0">
+                                    <TextBlock Style="{StaticResource Muted}" Foreground="#E8B4BC" Text="{loc:T AutoPremiumWarning}"/>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T SettingsWindowTitle}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T SettingsWindowBlurb}"/>
+                                <CheckBox x:Name="ChkLoginStartup"   Margin="0,13,0,6" Content="{loc:T ChkLoginStartup}"   Click="StartupPreference_Changed"/>
+                                <CheckBox x:Name="ChkStartMinimised" Margin="0,0,0,6"  Content="{loc:T ChkStartMinimised}" Click="StartupPreference_Changed"/>
+                                <CheckBox x:Name="ChkCloseToTray"    IsChecked="True"  Content="{loc:T ChkCloseToTray}"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T SettingsFilesTitle}"/>
+                                <WrapPanel Margin="0,4,0,0">
+                                    <Button Content="{loc:T BtnOpenConfig}"    Click="BtnEditConfig_Click" Margin="0,0,8,0"/>
+                                    <Button Content="{loc:T BtnOpenLogFolder}" Click="BtnOpenLogs_Click"/>
+                                </WrapPanel>
+                                <TextBlock Style="{StaticResource Muted}" Margin="0,12,0,0" Text="{loc:T ConfigRestartNote}"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -190,10 +319,12 @@
                 </Grid>
             </ScrollViewer>
 
-            <!-- Toast strip for command results -->
-            <Border x:Name="ToastBar" Grid.Row="2" Visibility="Collapsed" Padding="26,12"
-                    Background="#152238" BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0">
-                <TextBlock x:Name="ToastText" TextWrapping="Wrap"/>
+            <Border x:Name="ToastBar" Grid.Row="2" Visibility="Collapsed" Padding="28,13"
+                    Background="#141014" BorderBrush="{StaticResource Border}" BorderThickness="0,1,0,0">
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle x:Name="ToastRail" Width="3" Fill="{StaticResource Accent}" Margin="0,0,12,0"/>
+                    <TextBlock x:Name="ToastText" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                </StackPanel>
             </Border>
         </Grid>
     </Grid>

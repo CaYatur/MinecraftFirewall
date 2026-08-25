@@ -5,36 +5,46 @@
     <Application.Resources>
         <ResourceDictionary>
 
-            <!-- Palette matches the project's banner so the app and the README read as one thing. -->
-            <SolidColorBrush x:Key="Bg"          Color="#0F172A"/>
-            <SolidColorBrush x:Key="BgPanel"     Color="#152238"/>
-            <SolidColorBrush x:Key="BgSidebar"   Color="#0B1220"/>
-            <SolidColorBrush x:Key="Border"      Color="#24354F"/>
-            <SolidColorBrush x:Key="Text"        Color="#E2E8F0"/>
-            <SolidColorBrush x:Key="TextMuted"   Color="#8CA3BE"/>
-            <SolidColorBrush x:Key="Accent"      Color="#22D3EE"/>
-            <SolidColorBrush x:Key="Good"        Color="#4ADE80"/>
-            <SolidColorBrush x:Key="Bad"         Color="#F87171"/>
-            <SolidColorBrush x:Key="Warn"        Color="#FBBF24"/>
+            <!-- Palette follows cayadev.com: near-black ground, a deep red wash, and one hot crimson
+                 accent used sparingly so it still means something when it appears. -->
+            <SolidColorBrush x:Key="Bg"         Color="#0A0A0C"/>
+            <SolidColorBrush x:Key="BgPanel"    Color="#141317"/>
+            <SolidColorBrush x:Key="BgSunken"   Color="#08080A"/>
+            <SolidColorBrush x:Key="BgSidebar"  Color="#08070A"/>
+            <SolidColorBrush x:Key="Border"     Color="#2A2229"/>
+            <SolidColorBrush x:Key="BorderSoft" Color="#1E1A20"/>
+            <SolidColorBrush x:Key="Text"       Color="#F4F3F5"/>
+            <SolidColorBrush x:Key="TextMuted"  Color="#9A929C"/>
+            <SolidColorBrush x:Key="Accent"     Color="#E11D2A"/>
+            <SolidColorBrush x:Key="AccentDim"  Color="#7A1018"/>
+            <SolidColorBrush x:Key="Good"       Color="#3FBF6A"/>
+            <SolidColorBrush x:Key="Bad"        Color="#E11D2A"/>
+            <SolidColorBrush x:Key="Warn"       Color="#E0A030"/>
+
+            <!-- The site's signature: a red glow bleeding out of the top-left of an almost-black page -->
+            <RadialGradientBrush x:Key="BgWash" GradientOrigin="0.18,0.05" Center="0.18,0.05" RadiusX="1.05" RadiusY="0.95">
+                <GradientStop Color="#2A0A11" Offset="0"/>
+                <GradientStop Color="#140609" Offset="0.45"/>
+                <GradientStop Color="#0A0A0C" Offset="1"/>
+            </RadialGradientBrush>
 
             <Style TargetType="TextBlock">
                 <Setter Property="Foreground" Value="{StaticResource Text}"/>
                 <Setter Property="FontFamily" Value="Segoe UI"/>
                 <Setter Property="FontSize" Value="13"/>
-                <Setter Property="TextOptions.TextFormattingMode" Value="Ideal"/>
             </Style>
 
             <Style x:Key="H1" TargetType="TextBlock">
                 <Setter Property="Foreground" Value="{StaticResource Text}"/>
                 <Setter Property="FontFamily" Value="Segoe UI"/>
-                <Setter Property="FontSize" Value="21"/>
-                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="FontSize" Value="23"/>
+                <Setter Property="FontWeight" Value="Bold"/>
             </Style>
 
             <Style x:Key="H2" TargetType="TextBlock">
                 <Setter Property="Foreground" Value="{StaticResource Text}"/>
                 <Setter Property="FontFamily" Value="Segoe UI"/>
-                <Setter Property="FontSize" Value="14"/>
+                <Setter Property="FontSize" Value="14.5"/>
                 <Setter Property="FontWeight" Value="SemiBold"/>
                 <Setter Property="Margin" Value="0,0,0,8"/>
             </Style>
@@ -42,23 +52,33 @@
             <Style x:Key="Muted" TargetType="TextBlock">
                 <Setter Property="Foreground" Value="{StaticResource TextMuted}"/>
                 <Setter Property="FontFamily" Value="Segoe UI"/>
-                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="FontSize" Value="12.5"/>
                 <Setter Property="TextWrapping" Value="Wrap"/>
+                <Setter Property="LineHeight" Value="18"/>
             </Style>
 
+            <Style x:Key="FieldLabel" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{StaticResource TextMuted}"/>
+                <Setter Property="FontFamily" Value="Segoe UI"/>
+                <Setter Property="FontSize" Value="11.5"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="Margin" Value="0,0,0,4"/>
+            </Style>
+
+            <!-- Squared-off corners throughout, matching the site's angular treatment -->
             <Style TargetType="Button">
                 <Setter Property="Foreground" Value="{StaticResource Text}"/>
-                <Setter Property="Background" Value="#1E3050"/>
+                <Setter Property="Background" Value="#1C1A20"/>
                 <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
                 <Setter Property="BorderThickness" Value="1"/>
-                <Setter Property="Padding" Value="14,7"/>
+                <Setter Property="Padding" Value="15,8"/>
                 <Setter Property="FontFamily" Value="Segoe UI"/>
                 <Setter Property="FontSize" Value="13"/>
                 <Setter Property="Cursor" Value="Hand"/>
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="Chrome" CornerRadius="6"
+                            <Border x:Name="Chrome" CornerRadius="3"
                                     Background="{TemplateBinding Background}"
                                     BorderBrush="{TemplateBinding BorderBrush}"
                                     BorderThickness="{TemplateBinding BorderThickness}">
@@ -67,10 +87,11 @@
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Chrome" Property="Background" Value="#274268"/>
+                                    <Setter TargetName="Chrome" Property="Background" Value="#272229"/>
+                                    <Setter TargetName="Chrome" Property="BorderBrush" Value="#4A3038"/>
                                 </Trigger>
                                 <Trigger Property="IsEnabled" Value="False">
-                                    <Setter TargetName="Chrome" Property="Opacity" Value="0.4"/>
+                                    <Setter TargetName="Chrome" Property="Opacity" Value="0.35"/>
                                     <Setter Property="Cursor" Value="Arrow"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
@@ -80,8 +101,43 @@
             </Style>
 
             <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-                <Setter Property="Background" Value="#0E7490"/>
-                <Setter Property="BorderBrush" Value="#22D3EE"/>
+                <Setter Property="Background" Value="{StaticResource Accent}"/>
+                <Setter Property="BorderBrush" Value="#FF3A46"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Chrome" CornerRadius="3"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Chrome" Property="Background" Value="#F5222F"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="Chrome" Property="Opacity" Value="0.35"/>
+                                    <Setter Property="Cursor" Value="Arrow"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="TextBox">
+                <Setter Property="Background" Value="{StaticResource BgSunken}"/>
+                <Setter Property="Foreground" Value="{StaticResource Text}"/>
+                <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="9,7"/>
+                <Setter Property="FontFamily" Value="Segoe UI"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="CaretBrush" Value="{StaticResource Accent}"/>
+                <Setter Property="SelectionBrush" Value="{StaticResource AccentDim}"/>
             </Style>
 
             <Style TargetType="CheckBox">
@@ -91,15 +147,22 @@
                 <Setter Property="Margin" Value="0,0,0,4"/>
             </Style>
 
+            <Style TargetType="RadioButton">
+                <Setter Property="Foreground" Value="{StaticResource Text}"/>
+                <Setter Property="FontFamily" Value="Segoe UI"/>
+                <Setter Property="FontSize" Value="13"/>
+            </Style>
+
             <Style x:Key="Card" TargetType="Border">
                 <Setter Property="Background" Value="{StaticResource BgPanel}"/>
-                <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
+                <Setter Property="BorderBrush" Value="{StaticResource BorderSoft}"/>
                 <Setter Property="BorderThickness" Value="1"/>
-                <Setter Property="CornerRadius" Value="8"/>
-                <Setter Property="Padding" Value="16"/>
+                <Setter Property="CornerRadius" Value="4"/>
+                <Setter Property="Padding" Value="18"/>
                 <Setter Property="Margin" Value="0,0,0,14"/>
             </Style>
 
+            <!-- Nav items carry a red left rail when active, echoing the site's underlined tab -->
             <Style x:Key="NavButton" TargetType="RadioButton">
                 <Setter Property="Foreground" Value="{StaticResource TextMuted}"/>
                 <Setter Property="FontFamily" Value="Segoe UI"/>
@@ -108,21 +171,42 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="RadioButton">
-                            <Border x:Name="Chrome" Background="Transparent" CornerRadius="6" Padding="14,9" Margin="8,2">
-                                <ContentPresenter VerticalAlignment="Center"/>
-                            </Border>
+                            <Grid>
+                                <Border x:Name="Chrome" Background="Transparent" Padding="20,10" Margin="0,1"/>
+                                <Rectangle x:Name="Rail" Width="3" HorizontalAlignment="Left"
+                                           Fill="{StaticResource Accent}" Visibility="Collapsed"/>
+                                <ContentPresenter VerticalAlignment="Center" Margin="20,10"/>
+                            </Grid>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Chrome" Property="Background" Value="#152238"/>
+                                    <Setter TargetName="Chrome" Property="Background" Value="#141014"/>
+                                    <Setter Property="Foreground" Value="{StaticResource Text}"/>
                                 </Trigger>
                                 <Trigger Property="IsChecked" Value="True">
-                                    <Setter TargetName="Chrome" Property="Background" Value="#1B3350"/>
+                                    <Setter TargetName="Chrome" Property="Background" Value="#1A0F13"/>
+                                    <Setter TargetName="Rail" Property="Visibility" Value="Visible"/>
                                     <Setter Property="Foreground" Value="{StaticResource Text}"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Setter.Value>
                 </Setter>
+            </Style>
+
+            <Style x:Key="Console" TargetType="Border">
+                <Setter Property="Background" Value="{StaticResource BgSunken}"/>
+                <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CornerRadius" Value="3"/>
+                <Setter Property="Padding" Value="13"/>
+            </Style>
+
+            <Style x:Key="ConsoleText" TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, monospace"/>
+                <Setter Property="FontSize" Value="11.5"/>
+                <Setter Property="Foreground" Value="{StaticResource TextMuted}"/>
+                <Setter Property="TextWrapping" Value="NoWrap"/>
             </Style>
 
         </ResourceDictionary>
