@@ -1,5 +1,6 @@
 using System.Net;
 using MinecraftFirewall.Proxy.Alerts;
+using MinecraftFirewall.Proxy.Defense;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.IpIntel;
@@ -37,12 +38,17 @@ public sealed class PolicyEngine(
     StrikeTracker strikeTracker,
     IIpInfoClient ipInfoClient,
     IAlertSender alerts,
+    ThreatIntelligence threatIntelligence,
     IOptions<FirewallBanOptions> banOptions,
     IOptions<IpInfoOptions> ipInfoOptions,
+    IOptions<DdosOptions> ddosOptions,
+    IOptions<BotDefenseOptions> botOptions,
     ILogger<PolicyEngine> logger)
 {
     private readonly FirewallBanOptions _banOptions = banOptions.Value;
     private readonly IpInfoOptions _ipInfoOptions = ipInfoOptions.Value;
+    private readonly DdosOptions _ddosOptions = ddosOptions.Value;
+    private readonly BotDefenseOptions _botOptions = botOptions.Value;
 
     /// <summary>Checked once per connection, right after the Handshake is parsed, before the
     /// status/login branch — see HostnameMatcher for the matching rules and its important caveat
@@ -51,6 +57,12 @@ public sealed class PolicyEngine(
     {
         if (banService.IsBanned(remoteAddress))
             return new PolicyDecision(false, "IP is currently firewall-banned.");
+
+        // Checked here rather than in EvaluateLogin so it also covers status pings, which is where a
+        // scanner shows up before it ever tries to log in — and ahead of the hostname check, so it
+        // applies to every connection rather than only the ones already being turned away.
+        if (threatIntelligence.Action == ThreatListAction.Block && threatIntelligence.IsOnImportedList(remoteAddress))
+            return new PolicyDecision(false, "Address appears on an imported threat list.");
 
         if (HostnameMatcher.IsAllowed(serverAddress, profile.AllowedHostnames))
             return new PolicyDecision(true, "OK");
@@ -228,6 +240,71 @@ public sealed class PolicyEngine(
         // arguments are free-form player input that could carry anything.
         alerts.Send(AlertKind.DangerousCommand,
             $"☢️ **Dangerous command blocked** on `{AlertText.Field(profileName)}`\n`{AlertText.Field(username)}` from `{AlertText.Field(remoteAddress.ToString())}` tried `/{AlertText.Field(command)}`");
+    }
+
+    /// <summary>
+    /// Called by the accept loop when the connection governor turned an address away.
+    ///
+    /// Only a light strike, on purpose. The addresses that reach this point completed a TCP handshake,
+    /// so they are real rather than spoofed — but a single refusal can just as easily be a household
+    /// NAT with several players behind it during a busy evening. A sustained flood accumulates enough
+    /// of these to reach the ban threshold within seconds; one burst does not.
+    /// </summary>
+    public void RegisterFloodRefusal(IPAddress address, string profileName, AdmissionVerdict verdict) =>
+        RegisterStrikeAndMaybeBan(address, $"[{profileName}] connection refused by admission control ({verdict})",
+            weight: _ddosOptions.StrikeWeightOnFlood);
+
+    /// <summary>Called when the bot score was high enough to refuse a login. The alert carries the
+    /// individual signals rather than just the total, because a score on its own gives nobody enough
+    /// to judge whether the refusal was right.</summary>
+    public void RegisterBotDenial(IPAddress remoteAddress, string profileName, string username, BotAssessment assessment)
+    {
+        RegisterStrikeAndMaybeBan(remoteAddress,
+            $"[{profileName}] '{username}' refused as automated (score {assessment.Score}): {assessment.Explain()}",
+            weight: _botOptions.StrikeWeightOnDeny);
+
+        alerts.Send(AlertKind.Ban,
+            $"🤖 **Refused as a bot** on `{AlertText.Field(profileName)}`\n" +
+            $"`{AlertText.Field(username)}` from `{AlertText.Field(remoteAddress.ToString())}` — score {assessment.Score}\n" +
+            $"{AlertText.Field(assessment.Explain())}");
+    }
+
+    /// <summary>Called when the bot score was worth reporting but not acting on — either because the
+    /// score sat between the two thresholds, or because scoring is still in log-only mode.</summary>
+    public void ReportBotSuspicion(IPAddress remoteAddress, string profileName, string username, BotAssessment assessment) =>
+        logger.LogWarning("[{Profile}] '{Username}' from {Ip} scored {Score} on bot signals but was allowed through: {Signals}",
+            profileName, username, remoteAddress, assessment.Score, assessment.Explain());
+
+    /// <summary>
+    /// Called when an authorised connection blew through its per-connection packet or byte budget.
+    ///
+    /// Struck at full weight. Unlike a refusal at the accept loop, this comes from a connection that
+    /// already passed every identity check, so there is no shared-NAT ambiguity about who sent it —
+    /// this exact session did.
+    /// </summary>
+    public void RegisterPacketFlood(IPAddress remoteAddress, string profileName, string username, string detail)
+    {
+        RegisterStrikeAndMaybeBan(remoteAddress,
+            $"[{profileName}] '{username}' exceeded its packet budget: {detail}",
+            weight: _banOptions.StrikesBeforeBan);
+
+        alerts.Send(AlertKind.Ban,
+            $"🌊 **Packet flood** on `{AlertText.Field(profileName)}`\n" +
+            $"`{AlertText.Field(username)}` from `{AlertText.Field(remoteAddress.ToString())}` — {AlertText.Field(detail)}");
+    }
+
+    /// <summary>Called when deep inspection refused a packet — an injection payload, an impossible
+    /// coordinate, a malformed plugin message. These are things no Minecraft client sends, so unlike a
+    /// movement heuristic there is no benefit of the doubt to extend.</summary>
+    public void RegisterProtocolViolation(IPAddress remoteAddress, string profileName, string username, string detail)
+    {
+        RegisterStrikeAndMaybeBan(remoteAddress,
+            $"[{profileName}] '{username}' sent something no client sends: {detail}",
+            weight: _banOptions.StrikesBeforeBan);
+
+        alerts.Send(AlertKind.DangerousCommand,
+            $"🧬 **Blocked packet** on `{AlertText.Field(profileName)}`\n" +
+            $"`{AlertText.Field(username)}` from `{AlertText.Field(remoteAddress.ToString())}` — {AlertText.Field(detail)}");
     }
 
     private void RegisterStrikeAndMaybeBan(IPAddress address, string reason, int weight = 1)

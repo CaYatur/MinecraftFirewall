@@ -22,6 +22,10 @@ public enum BanResult
 /// </summary>
 public sealed class FirewallBanService : IDisposable
 {
+    private static readonly TimeSpan NeverBanWarningInterval = TimeSpan.FromMinutes(1);
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<IPAddress, DateTimeOffset> _lastNeverBanWarning = new();
+
     private readonly FirewallBanOptions _options;
     private readonly NeverBanList _neverBanList;
     private readonly IWindowsFirewallGateway _gateway;
@@ -109,11 +113,35 @@ public sealed class FirewallBanService : IDisposable
 
     public bool IsBanned(IPAddress address) => _activeBans.ContainsKey(address);
 
+    /// <summary>One warning per address per minute. The dictionary is bounded by the never-ban list
+    /// being small by construction — it holds loopback, the private ranges and whatever the admin
+    /// added, so it cannot be grown by an attacker.</summary>
+    private bool ShouldLogNeverBanRefusal(IPAddress address)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+
+        if (_lastNeverBanWarning.TryGetValue(address, out DateTimeOffset last) && now - last < NeverBanWarningInterval)
+            return false;
+
+        _lastNeverBanWarning[address] = now;
+        return true;
+    }
+
     public BanResult Ban(IPAddress address, string reason, TimeSpan? duration = null)
     {
         if (_neverBanList.IsProtected(address))
         {
-            _logger.LogWarning("Refused to ban {Ip} — protected by the never-ban list. Reason was: {Reason}", address, reason);
+            // Throttled per address, because this is reached once per refused connection and the
+            // connections being refused are, by definition, arriving unusually fast. An unthrottled
+            // warning here turns a flood from one allowlisted address — a LAN machine gone haywire,
+            // or an admin load-testing their own server — into thousands of log lines a second, and
+            // then the disk is what fails rather than the thing being defended against.
+            if (ShouldLogNeverBanRefusal(address))
+            {
+                _logger.LogWarning("Refused to ban {Ip} — protected by the never-ban list. Reason was: {Reason} " +
+                                   "(further refusals for this address will be logged at most once a minute)", address, reason);
+            }
+
             return BanResult.RefusedNeverBan;
         }
 

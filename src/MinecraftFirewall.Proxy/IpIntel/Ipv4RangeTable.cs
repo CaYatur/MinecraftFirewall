@@ -29,6 +29,14 @@ public sealed class Ipv4RangeTable
             if (line.Length == 0 || line.StartsWith('#'))
                 continue;
 
+            // Only the first whitespace-separated token is considered. Several public threat lists
+            // append a column after the address (IPsum, for one, follows each IP with the number of
+            // blacklists it appeared on), and taking the whole line would silently discard every
+            // entry in such a list rather than fail loudly.
+            int separator = line.AsSpan().IndexOfAny(' ', '	');
+            if (separator > 0)
+                line = line[..separator];
+
             if (!TryParseCidr(line, out uint start, out uint end))
                 continue; // skip malformed/IPv6 lines rather than fail the whole refresh
 

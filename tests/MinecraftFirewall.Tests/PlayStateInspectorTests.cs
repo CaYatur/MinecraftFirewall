@@ -10,6 +10,8 @@ using MinecraftFirewall.Proxy.RateLimiting;
 using MinecraftFirewall.Tests.TestDoubles;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using MinecraftFirewall.Proxy.Defense;
+using MinecraftFirewall.Proxy.Inspection;
 
 namespace MinecraftFirewall.Tests;
 
@@ -40,12 +42,15 @@ public class PlayStateInspectorTests
         var banService = new FirewallBanService(banOptions, neverBanList, gateway, new RecordingAlertSender(), NullLogger<FirewallBanService>.Instance);
         var strikeTracker = new StrikeTracker();
         var policyEngine = new PolicyEngine(vpnIntel, rateLimiter, banService, strikeTracker, new FakeIpInfoClient(), new RecordingAlertSender(),
-            banOptions, Options.Create(new IpInfoOptions()), NullLogger<PolicyEngine>.Instance);
+            DefenseTestFactory.CreateThreatIntelligence(), banOptions, Options.Create(new IpInfoOptions()),
+            Options.Create(new DdosOptions()), Options.Create(new BotDefenseOptions()), NullLogger<PolicyEngine>.Instance);
         return new Fixture(profile, policyEngine, gateway, banService);
     }
 
-    private static PlayStateInspector CreateInspector(Fixture fixture, string username, GraceAuthRequirement? graceAuth = null, bool startsTrusted = true) =>
-        new(fixture.Profile, username, RemoteIp, Ids, graceAuth, startsTrusted, DefaultIdentityOptions, DangerousCommands, Messages, fixture.PolicyEngine, NullLogger.Instance);
+    private static PlayStateInspector CreateInspector(Fixture fixture, string username, GraceAuthRequirement? graceAuth = null,
+        bool startsTrusted = true, InspectionOptions? inspection = null) =>
+        new(fixture.Profile, username, RemoteIp, Ids, graceAuth, startsTrusted, DefaultIdentityOptions, DangerousCommands,
+            Messages, fixture.PolicyEngine, inspection ?? new InspectionOptions(), NullLogger.Instance);
 
     // PlayStateInspector unconditionally treats the very first serverbound packet it ever reads as
     // Login Acknowledged (see the comment at its use site in PlayStateInspector.cs — a real

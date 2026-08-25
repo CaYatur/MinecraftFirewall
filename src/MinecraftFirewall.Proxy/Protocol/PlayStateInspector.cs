@@ -1,5 +1,6 @@
 using System.Net;
 using MinecraftFirewall.Proxy.Identity;
+using MinecraftFirewall.Proxy.Inspection;
 using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
 
@@ -26,14 +27,19 @@ public sealed class PlayStateInspector(
     IReadOnlyCollection<string> dangerousCommands,
     MessagesOptions messages,
     PolicyEngine policyEngine,
+    InspectionOptions inspection,
     ILogger logger)
 {
-    private const int MaxServerboundFrameSize = 2 * 1024 * 1024;
+    private readonly PacketBudget _budget = new(inspection.MaxPacketsPerSecond, inspection.MaxBytesPerSecond);
+    private readonly MovementAnalyzer _movement = new(inspection);
+    private readonly SecondCounter _attacks = new();
 
     private bool _awaitingLoginAcknowledged = true;
     private bool _inPlayState;
     private bool _graceAuthResolved;
     private bool _isTrusted = startsTrusted;
+    private bool _reportedLayoutProblem;
+    private bool _reportedAttackRate;
 
     /// <summary>Set when a dangerous command or a failed grace-authentication means this connection
     /// must be cut off — the caller (ClientConnection) checks this after the loop ends to decide
@@ -44,7 +50,29 @@ public sealed class PlayStateInspector(
     {
         while (!ct.IsCancellationRequested)
         {
-            DecodedPacket packet = await CompressedPacketReader.ReadAsync(clientStream, MaxServerboundFrameSize, ct).ConfigureAwait(false);
+            DecodedPacket packet = await CompressedPacketReader
+                .ReadAsync(clientStream, inspection.MaxServerboundFrameBytes, ct, inspection.MaxServerboundUncompressedBytes)
+                .ConfigureAwait(false);
+
+            // Charged before anything is decided about the packet. A flood is defined by its volume,
+            // not its contents, so the cheapest check has to be the first one.
+            if (inspection.Enabled && _budget.Charge(packet.RawFrame.Length, DateTimeOffset.UtcNow) is { } overBudget)
+            {
+                logger.LogWarning("[{Profile}] '{Username}' ({Ip}) exceeded its packet budget: {Detail}",
+                    profile.Name, username, remoteAddress, overBudget);
+                policyEngine.RegisterPacketFlood(remoteAddress, profile.Name, username, overBudget);
+                DisconnectReason = messages.GenericDenied;
+                return;
+            }
+
+            if (_inPlayState && inspection.Enabled && InspectPlayPacket(packet) is { } violation)
+            {
+                logger.LogWarning("[{Profile}] blocked a packet from '{Username}' ({Ip}): {Violation}",
+                    profile.Name, username, remoteAddress, violation);
+                policyEngine.RegisterProtocolViolation(remoteAddress, profile.Name, username, violation);
+                DisconnectReason = messages.GenericDenied;
+                return;
+            }
 
             if (!_inPlayState)
             {
@@ -89,6 +117,19 @@ public sealed class PlayStateInspector(
             }
 
             string text = MinecraftPrimitives.ReadString(packet.Fields, out _);
+
+            if (inspection.Enabled && inspection.ScanForInjectionPayloads &&
+                PayloadScanner.Scan(text, inspection.MaxChatLength) is { } finding)
+            {
+                // Dropped whole, never cleaned and forwarded. A partially sanitised payload passed on
+                // is how filters get bypassed, and the backend has no way to know this one was touched.
+                logger.LogWarning("[{Profile}] blocked {Kind} from '{Username}' ({Ip}): {Rule} — {Detail}",
+                    profile.Name, isCommand ? "a command" : "a chat message", username, remoteAddress,
+                    finding.Rule, finding.Detail);
+                policyEngine.RegisterProtocolViolation(remoteAddress, profile.Name, username, $"{finding.Rule}: {finding.Detail}");
+                DisconnectReason = messages.GenericDenied;
+                return;
+            }
 
             if (graceAuth is not null && !_graceAuthResolved)
             {
@@ -180,6 +221,134 @@ public sealed class PlayStateInspector(
                 // (e.g. wrong argument count) — still swallow it so a mistyped password never leaks
                 // to the backend or, via the branch this call short-circuits, to the command log.
                 return true;
+        }
+    }
+
+    /// <summary>
+    /// Checks one Play-state packet, returning why it should be refused or null to let it through.
+    ///
+    /// Only the packet kinds whose layout is documented for this exact protocol version are opened;
+    /// everything else is forwarded untouched. That is the same discipline the packet-ID registry
+    /// follows, and for the same reason — a wrong guess about a field offset is not a missed
+    /// detection, it is a firewall that mangles ordinary play.
+    /// </summary>
+    private string? InspectPlayPacket(DecodedPacket packet)
+    {
+        if (packetIds.IsMovement(packet.PacketId))
+            return InspectMovement(packet);
+
+        if (packet.PacketId == packetIds.PlayCustomPayloadServerbound)
+            return InspectPluginMessage(packet);
+
+        if (packet.PacketId == packetIds.PlayInteractServerbound || packet.PacketId == packetIds.PlaySwingServerbound)
+        {
+            CountAttack();
+            return null;
+        }
+
+        return null;
+    }
+
+    private string? InspectMovement(DecodedPacket packet)
+    {
+        bool positional = packet.PacketId == packetIds.PlayMovePlayerPosServerbound ||
+                          packet.PacketId == packetIds.PlayMovePlayerPosRotServerbound;
+
+        if (!positional)
+        {
+            _movement.NoteNonPositionalMovement();
+            return null;
+        }
+
+        MovementFinding finding = _movement.Inspect(packet.Fields, DateTimeOffset.UtcNow);
+
+        if (_movement.LayoutUnrecognised && !_reportedLayoutProblem)
+        {
+            _reportedLayoutProblem = true;
+            logger.LogInformation(
+                "[{Profile}] movement packets from '{Username}' do not match the layout recorded for this protocol " +
+                "version — movement analysis is off for this connection. Play is unaffected.",
+                profile.Name, username);
+        }
+
+        return finding.Severity switch
+        {
+            // Not a cheat and not a judgement call: no client produces these by playing.
+            MovementSeverity.Invalid => $"impossible movement — {finding.Detail}",
+
+            MovementSeverity.Suspicious when inspection.KickOnMovementAnomaly => $"movement anomaly — {finding.Detail}",
+
+            MovementSeverity.Suspicious => ReportMovementAnomaly(finding),
+
+            _ => null,
+        };
+    }
+
+    /// <summary>Records a movement anomaly without acting on it — the default, because this proxy
+    /// cannot see the ice, boat, elytra or plugin teleport that would explain it. See
+    /// InspectionOptions.KickOnMovementAnomaly.</summary>
+    private string? ReportMovementAnomaly(MovementFinding finding)
+    {
+        logger.LogInformation("[{Profile}] '{Username}' ({Ip}) {Detail}. Not acted on — see KickOnMovementAnomaly.",
+            profile.Name, username, remoteAddress, finding.Detail);
+        return null;
+    }
+
+    private string? InspectPluginMessage(DecodedPacket packet)
+    {
+        if (packet.Fields.Length > inspection.MaxPluginMessageBytes)
+        {
+            return $"plugin message of {packet.Fields.Length} bytes, over the {inspection.MaxPluginMessageBytes}-byte limit";
+        }
+
+        string channel;
+        try
+        {
+            channel = MinecraftPrimitives.ReadString(packet.Fields, out _);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or ArgumentOutOfRangeException)
+        {
+            return "plugin message whose channel name could not be read";
+        }
+
+        return PayloadScanner.IsValidChannelName(channel)
+            ? null
+            : $"plugin message on '{Truncate(channel)}', which is not a valid channel name";
+    }
+
+    private void CountAttack()
+    {
+        int perSecond = _attacks.Record(DateTimeOffset.UtcNow);
+
+        // Reported once per connection. Click rate is the weakest kind of evidence — a macro mouse and
+        // an autoclicker look identical from here, and so does a player with a very fast finger — so
+        // it goes in the log for a human to weigh, and never disconnects anyone.
+        if (perSecond > inspection.MaxAttacksPerSecond && !_reportedAttackRate)
+        {
+            _reportedAttackRate = true;
+            logger.LogInformation("[{Profile}] '{Username}' ({Ip}) sent {Rate} attack packets in one second " +
+                                  "(above {Limit}), which suggests automated clicking. Not acted on.",
+                profile.Name, username, remoteAddress, perSecond, inspection.MaxAttacksPerSecond);
+        }
+    }
+
+    private static string Truncate(string value) => value.Length <= 48 ? value : value[..48] + "\u2026";
+
+    /// <summary>Counts events inside the current second. Owned by one connection, so no locking.</summary>
+    private sealed class SecondCounter
+    {
+        private long _windowStart = DateTimeOffset.UtcNow.Ticks;
+        private int _count;
+
+        public int Record(DateTimeOffset now)
+        {
+            if (now.Ticks - _windowStart >= TimeSpan.TicksPerSecond)
+            {
+                _windowStart = now.Ticks;
+                _count = 0;
+            }
+
+            return ++_count;
         }
     }
 

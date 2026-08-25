@@ -8,6 +8,7 @@ using MinecraftFirewall.Proxy.RateLimiting;
 using MinecraftFirewall.Tests.TestDoubles;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using MinecraftFirewall.Proxy.Defense;
 
 namespace MinecraftFirewall.Tests;
 
@@ -33,8 +34,10 @@ public class PolicyEngineTests
         var strikeTracker = new StrikeTracker();
         var ipInfo = new FakeIpInfoClient();
 
-        var engine = new PolicyEngine(vpnIntel, rateLimiter, banService, strikeTracker, ipInfo, alerts, banOptions,
-            Options.Create(ipInfoOptions ?? new IpInfoOptions()), NullLogger<PolicyEngine>.Instance);
+        var engine = new PolicyEngine(vpnIntel, rateLimiter, banService, strikeTracker, ipInfo, alerts,
+            DefenseTestFactory.CreateThreatIntelligence(), banOptions,
+            Options.Create(ipInfoOptions ?? new IpInfoOptions()), Options.Create(new DdosOptions()),
+            Options.Create(new BotDefenseOptions()), NullLogger<PolicyEngine>.Instance);
         return new Fixture(engine, vpnIntel, gateway, banService, ipInfo, alerts);
     }
 

@@ -12,6 +12,8 @@ using MinecraftFirewall.Proxy.RateLimiting;
 using MinecraftFirewall.Tests.TestDoubles;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using MinecraftFirewall.Proxy.Defense;
+using MinecraftFirewall.Proxy.Inspection;
 
 namespace MinecraftFirewall.Tests;
 
@@ -34,6 +36,8 @@ public class ProxyIntegrationTests : IAsyncLifetime
     private CancellationTokenSource _listenersCts = null!;
     private FirewallBanService _banService = null!;
     private RsaServerKeyPair _serverKey = null!;
+    private ConnectionGovernor _governor = null!;
+    private BotDetector _botDetector = null!;
 
     public async Task InitializeAsync()
     {
@@ -63,7 +67,8 @@ public class ProxyIntegrationTests : IAsyncLifetime
         var strikeTracker = new StrikeTracker();
 
         _policyEngine = new PolicyEngine(vpnIntel, rateLimiter, _banService, strikeTracker, new FakeIpInfoClient(), new RecordingAlertSender(),
-            banOptions, Options.Create(new IpInfoOptions()), NullLogger<PolicyEngine>.Instance);
+            DefenseTestFactory.CreateThreatIntelligence(), banOptions, Options.Create(new IpInfoOptions()),
+            Options.Create(new DdosOptions()), Options.Create(new BotDefenseOptions()), NullLogger<PolicyEngine>.Instance);
 
         var identityOptions = new IdentityOptions();
         var dangerousCommands = new DangerousCommandOptions().Commands;
@@ -73,8 +78,13 @@ public class ProxyIntegrationTests : IAsyncLifetime
         var premiumHandshake = PremiumTestFactory.CreateHandshake(_serverKey);
 
         _listenersCts = new CancellationTokenSource();
-        var listenerA = new ProxyListener(_profileA, _policyEngine, identityOptions, dangerousCommands, messages, premiumHandshake, NullLogger.Instance);
-        var listenerB = new ProxyListener(_profileB, _policyEngine, identityOptions, dangerousCommands, messages, premiumHandshake, NullLogger.Instance);
+        _governor = DefenseTestFactory.CreateGovernor();
+        _botDetector = DefenseTestFactory.CreateBotDetector();
+        var inspection = new InspectionOptions();
+        var listenerA = new ProxyListener(_profileA, _policyEngine, identityOptions, dangerousCommands, messages,
+            premiumHandshake, _governor, _botDetector, inspection, NullLogger.Instance);
+        var listenerB = new ProxyListener(_profileB, _policyEngine, identityOptions, dangerousCommands, messages,
+            premiumHandshake, _governor, _botDetector, inspection, NullLogger.Instance);
         _ = listenerA.RunAsync(_listenersCts.Token);
         _ = listenerB.RunAsync(_listenersCts.Token);
 
@@ -84,6 +94,8 @@ public class ProxyIntegrationTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await _listenersCts.CancelAsync();
+        _governor.Dispose();
+        _botDetector.Dispose();
         _banService.Dispose();
         _serverKey.Dispose();
         await _backendA.DisposeAsync();

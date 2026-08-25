@@ -8,6 +8,7 @@ using MinecraftFirewall.Tests.TestDoubles;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
+using MinecraftFirewall.Proxy.Defense;
 
 namespace MinecraftFirewall.Tests;
 
@@ -173,8 +174,11 @@ public class PolicyEngineAlertTests
             new StrikeTracker(),
             new FakeIpInfoClient(),
             alerts,
+            DefenseTestFactory.CreateThreatIntelligence(),
             banOptions,
             Options.Create(new IpInfoOptions()),
+            Options.Create(new DdosOptions()),
+            Options.Create(new BotDefenseOptions()),
             NullLogger<PolicyEngine>.Instance);
     }
 

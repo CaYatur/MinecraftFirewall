@@ -1,10 +1,12 @@
 using MinecraftFirewall.Proxy;
 using MinecraftFirewall.Proxy.Admin;
 using MinecraftFirewall.Proxy.Alerts;
+using MinecraftFirewall.Proxy.Defense;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.Identity.Persistence;
 using MinecraftFirewall.Proxy.Identity.Premium;
+using MinecraftFirewall.Proxy.Inspection;
 using MinecraftFirewall.Proxy.IpIntel;
 using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
@@ -31,6 +33,11 @@ builder.Services.Configure<MessagesOptions>(builder.Configuration.GetSection(Mes
 builder.Services.Configure<IpInfoOptions>(builder.Configuration.GetSection(IpInfoOptions.SectionName));
 builder.Services.Configure<PremiumOptions>(builder.Configuration.GetSection(PremiumOptions.SectionName));
 builder.Services.Configure<IdentityPersistenceOptions>(builder.Configuration.GetSection(IdentityPersistenceOptions.SectionName));
+builder.Services.Configure<DdosOptions>(builder.Configuration.GetSection(DdosOptions.SectionName));
+builder.Services.Configure<BotDefenseOptions>(builder.Configuration.GetSection(BotDefenseOptions.SectionName));
+builder.Services.Configure<HoneypotOptions>(builder.Configuration.GetSection(HoneypotOptions.SectionName));
+builder.Services.Configure<ThreatIntelOptions>(builder.Configuration.GetSection(ThreatIntelOptions.SectionName));
+builder.Services.Configure<InspectionOptions>(builder.Configuration.GetSection(InspectionOptions.SectionName));
 
 builder.Services.Configure<AlertOptions>(builder.Configuration.GetSection(AlertOptions.SectionName));
 
@@ -47,6 +54,9 @@ builder.Services.AddSingleton<IAlertSender>(sp =>
 });
 
 builder.Services.AddSingleton<VpnIntelligence>();
+builder.Services.AddSingleton<ThreatIntelligence>();
+builder.Services.AddSingleton<ConnectionGovernor>();
+builder.Services.AddSingleton<BotDetector>();
 builder.Services.AddSingleton<IIpInfoClient, IpInfoClient>();
 
 // One RSA keypair for the whole process, generated at startup — the same thing a real Notchian
@@ -78,6 +88,12 @@ builder.Services.AddSingleton<IdentityStatePersistence>();
 builder.Services.AddHostedService<IdentityPersistenceService>();
 
 builder.Services.AddHostedService<ProxyHostService>();
+
+// After ProxyHostService, so the profiles it reads are already built and the honeypot can see which
+// ports are genuinely spoken for before it tries to bind a decoy on one of them.
+builder.Services.AddSingleton<ThreatFeedService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ThreatFeedService>());
+builder.Services.AddHostedService<HoneypotService>();
 
 builder.Services.AddSingleton<AdminCommandHandler>();
 builder.Services.AddHostedService<AdminPipeServer>();

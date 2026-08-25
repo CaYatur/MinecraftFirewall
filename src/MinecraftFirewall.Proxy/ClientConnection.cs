@@ -1,7 +1,9 @@
 using System.Net;
 using System.Net.Sockets;
+using MinecraftFirewall.Proxy.Defense;
 using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.Identity.Premium;
+using MinecraftFirewall.Proxy.Inspection;
 using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
 using MinecraftFirewall.Proxy.Protocol;
@@ -39,6 +41,8 @@ public static class ClientConnection
         IReadOnlyCollection<string> dangerousCommands,
         MessagesOptions messages,
         PremiumLoginHandshake premiumHandshake,
+        BotDetector botDetector,
+        InspectionOptions inspection,
         ILogger logger,
         CancellationToken hostShutdown)
     {
@@ -79,6 +83,14 @@ public static class ClientConnection
         if (!hostnameDecision.Allow)
         {
             logger.LogInformation("[{Profile}] connection from {Ip} denied: {Reason}", profile.Name, remoteAddress, hostnameDecision.Reason);
+
+            // The refusal already happened; this is what it leaves behind. A client that lies about
+            // the hostname field defeats the check itself — nothing the client sends can be trusted to
+            // describe how it connected — but repeating the attempt is behaviour, and behaviour is
+            // what the bot score is made of. The boundary that actually enforces "only through my
+            // domain" is the backend being unreachable, not this; see the README honesty notes.
+            botDetector.RecordHostnameMismatch(remoteAddress);
+
             if (handshake.NextState == HandshakeNextState.Login)
             {
                 await TrySendDisconnectAsync(client, clientStream, messages.HostnameNotAllowed, hostShutdown).ConfigureAwait(false);
@@ -88,12 +100,17 @@ public static class ClientConnection
 
         if (handshake.NextState == HandshakeNextState.Status)
         {
+            // Recorded before the rate limiter gets a say: what matters to the bot score is that this
+            // address asked for the server list at all, which is what a real client does before it
+            // joins — not whether this particular ping was served.
+            botDetector.RecordStatusPing(remoteAddress, DateTimeOffset.UtcNow);
             await HandleStatusAsync(client, clientStream, handshakeFrame, profile, remoteAddress, policyEngine, logger, hostShutdown).ConfigureAwait(false);
             return;
         }
 
         await HandleLoginAsync(client, clientStream, handshakeFrame, handshake, profile, remoteAddress,
-            policyEngine, identityOptions, dangerousCommands, messages, premiumHandshake, logger, preLoginCts, hostShutdown).ConfigureAwait(false);
+            policyEngine, identityOptions, dangerousCommands, messages, premiumHandshake, botDetector, inspection,
+            logger, preLoginCts, hostShutdown).ConfigureAwait(false);
     }
 
     private static async Task HandleStatusAsync(TcpClient client, NetworkStream clientStream, Frame handshakeFrame,
@@ -118,7 +135,8 @@ public static class ClientConnection
     private static async Task HandleLoginAsync(TcpClient client, NetworkStream clientStream, Frame handshakeFrame, HandshakeInfo handshake,
         ServerProfile profile, IPAddress remoteAddress, PolicyEngine policyEngine, IdentityOptions identityOptions,
         IReadOnlyCollection<string> dangerousCommands, MessagesOptions messages, PremiumLoginHandshake premiumHandshake,
-        ILogger logger, CancellationTokenSource preLoginCts, CancellationToken hostShutdown)
+        BotDetector botDetector, InspectionOptions inspection, ILogger logger, CancellationTokenSource preLoginCts,
+        CancellationToken hostShutdown)
     {
         Frame loginStartFrame;
         string username;
@@ -129,12 +147,31 @@ public static class ClientConnection
         }
         catch (OperationCanceledException) when (!hostShutdown.IsCancellationRequested)
         {
+            // Announced an intent to log in and then went quiet. One of these is nothing — a player
+            // alt-tabbing away mid-join does it. Several from one address is a port sweep, which is
+            // why it is counted rather than only logged.
+            botDetector.RecordHandshakeWithoutLogin(remoteAddress);
             logger.LogDebug("[{Profile}] {Ip} timed out or was slow sending Login Start.", profile.Name, remoteAddress);
             return;
         }
         catch (Exception ex) when (ex is InvalidDataException or IOException or EndOfStreamException or SocketException)
         {
+            botDetector.RecordHandshakeWithoutLogin(remoteAddress);
             logger.LogDebug("[{Profile}] {Ip} sent a malformed Login Start: {Message}", profile.Name, remoteAddress, ex.Message);
+            return;
+        }
+
+        // Before the username is logged, evaluated, or forwarded anywhere. It is the first
+        // attacker-controlled string in the connection and it is one that gets written to a log, which
+        // is exactly the path Log4Shell took into Minecraft servers. Note the deliberate use of a
+        // sanitised form in the log line below: reporting the refusal must not itself hand the payload
+        // to the formatter being protected.
+        if (inspection.Enabled && UsernameGuard.Check(username, inspection) is { } usernameProblem)
+        {
+            logger.LogWarning("[{Profile}] refused a login from {Ip}: {Problem} (name shown sanitised: '{Safe}')",
+                profile.Name, remoteAddress, usernameProblem, UsernameGuard.ForLogging(username));
+            policyEngine.RegisterProtocolViolation(remoteAddress, profile.Name, UsernameGuard.ForLogging(username), usernameProblem);
+            await TrySendDisconnectAsync(client, clientStream, messages.GenericDenied, hostShutdown).ConfigureAwait(false);
             return;
         }
 
@@ -148,6 +185,23 @@ public static class ClientConnection
         }
 
         bool hasPacketIds = ProtocolVersionRegistry.TryGet(handshake.ProtocolVersion, out var packetIds);
+
+        // Deliberately after the policy engine, never before it. The identity checks are the ones with
+        // a definite answer — an allowlisted address, a correct password, a verified Mojang account —
+        // and a heuristic must never get to overrule one of those. What the score judges is the
+        // connections about which nothing definite was known.
+        BotAssessment bots = botDetector.Assess(remoteAddress, username, handshake.ProtocolVersion, hasPacketIds, DateTimeOffset.UtcNow);
+        if (bots.ShouldDeny)
+        {
+            logger.LogWarning("[{Profile}] refused '{Username}' from {Ip} as automated (score {Score}): {Signals}",
+                profile.Name, username, remoteAddress, bots.Score, bots.Explain());
+            policyEngine.RegisterBotDenial(remoteAddress, profile.Name, username, bots);
+            await TrySendDisconnectAsync(client, clientStream, messages.GenericDenied, hostShutdown).ConfigureAwait(false);
+            return;
+        }
+
+        if (bots.ShouldReport)
+            policyEngine.ReportBotSuspicion(remoteAddress, profile.Name, username, bots);
 
         if (decision.GraceAuth is not null && !hasPacketIds)
         {
@@ -205,7 +259,7 @@ public static class ClientConnection
                 var inspector = new PlayStateInspector(
                     profile, username, remoteAddress, packetIds, decision.GraceAuth,
                     startsTrusted: decision.GraceAuth is null,
-                    identityOptions, dangerousCommands, messages, policyEngine, logger);
+                    identityOptions, dangerousCommands, messages, policyEngine, inspection, logger);
 
                 await PumpWithInspectionAsync(client, clientIo, backendStream, inspector, packetIds, hostShutdown).ConfigureAwait(false);
             }

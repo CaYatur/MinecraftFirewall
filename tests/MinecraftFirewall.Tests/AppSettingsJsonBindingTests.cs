@@ -1,6 +1,8 @@
 using MinecraftFirewall.Proxy;
 using MinecraftFirewall.Proxy.Alerts;
+using MinecraftFirewall.Proxy.Defense;
 using MinecraftFirewall.Proxy.Enforcement;
+using MinecraftFirewall.Proxy.Inspection;
 using MinecraftFirewall.Proxy.Identity.Persistence;
 using MinecraftFirewall.Proxy.Identity.Premium;
 using MinecraftFirewall.Proxy.IpIntel;
@@ -32,6 +34,65 @@ public class AppSettingsJsonBindingTests
 
     private static IConfigurationRoot LoadConfiguration() =>
         new ConfigurationBuilder().AddJsonFile(FindAppSettingsPath(), optional: false).Build();
+
+    [Fact]
+    public void AppSettingsJson_DefenceSections_BindToTheOptionTypesTheServiceActuallyReads()
+    {
+        // A typo in a section name does not fail — it binds nothing, and the option object silently
+        // keeps its compiled defaults. For the defence layer that failure mode is worse than usual:
+        // the settings that ship deliberately switched OFF (honeypot, bot denial, movement kicking)
+        // would look identical to a misspelled section, so nobody would ever notice the file was
+        // being ignored. Each assertion below is a value that differs from — or is deliberately
+        // pinned to — the C# default, so a mis-bound section shows up as a failure.
+        var config = LoadConfiguration();
+
+        var ddos = config.GetSection(DdosOptions.SectionName).Get<DdosOptions>();
+        Assert.NotNull(ddos);
+        Assert.True(ddos!.Enabled);
+        Assert.Equal(16, ddos.MaxConcurrentPerIp);
+        Assert.Equal(TimeSpan.FromSeconds(45), ddos.UnderAttackCooldown);
+
+        var bots = config.GetSection(BotDefenseOptions.SectionName).Get<BotDefenseOptions>();
+        Assert.NotNull(bots);
+        // Ships in log-only mode on purpose — see BotDefenseOptions.Action.
+        Assert.Equal(BotAction.LogOnly, bots!.Action);
+
+        var honeypot = config.GetSection(HoneypotOptions.SectionName).Get<HoneypotOptions>();
+        Assert.NotNull(honeypot);
+        Assert.False(honeypot!.Enabled);
+        Assert.NotEmpty(honeypot.Ports);
+
+        var threats = config.GetSection(ThreatIntelOptions.SectionName).Get<ThreatIntelOptions>();
+        Assert.NotNull(threats);
+        Assert.Equal(ThreatListAction.Score, threats!.Action);
+        Assert.NotEmpty(threats.FeedUrls);
+
+        var inspection = config.GetSection(InspectionOptions.SectionName).Get<InspectionOptions>();
+        Assert.NotNull(inspection);
+        Assert.True(inspection!.Enabled);
+        Assert.True(inspection.BlockImpossibleCoordinates);
+        // The one that must stay off: this proxy cannot see the ice, boat or plugin teleport that
+        // would explain an unusual movement. See InspectionOptions.KickOnMovementAnomaly.
+        Assert.False(inspection.KickOnMovementAnomaly);
+    }
+
+    [Fact]
+    public void AppSettingsJson_HoneypotPorts_DoNotCollideWithAnyShippedServerProfile()
+    {
+        // A decoy bound on a real server port either fails or, depending on start order, wins — and
+        // then bans players for connecting to their own server. The service drops colliding ports at
+        // startup, but the shipped defaults should not rely on that rescue.
+        var config = LoadConfiguration();
+
+        var honeypot = config.GetSection(HoneypotOptions.SectionName).Get<HoneypotOptions>()!;
+        var profiles = config.GetSection("ServerProfiles").Get<List<ServerProfileConfig>>()!;
+
+        foreach (var profile in profiles)
+        {
+            Assert.DoesNotContain(profile.PublicPort, honeypot.Ports);
+            Assert.DoesNotContain(profile.BackendPort, honeypot.Ports);
+        }
+    }
 
     [Fact]
     public void AppSettingsJson_ParsesWithoutError()
