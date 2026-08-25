@@ -162,8 +162,8 @@ public partial class MainWindow : Window
                 LogScroller.ScrollToEnd();
         }
 
-        if (status.State == ServiceState.Running && _lastState != ServiceState.Running)
-            await RefreshProfilesAsync();
+        if (status.State != _lastState)
+            await RefreshProfilesAsync(status.State == ServiceState.Running);
 
         _lastState = status.State;
     }
@@ -201,10 +201,38 @@ public partial class MainWindow : Window
         _suppressEvents = false;
     }
 
-    private async Task RefreshProfilesAsync()
+    /// <summary>
+    /// Shows what is being protected — from the running service when there is one, and from the
+    /// configuration file when there isn't.
+    ///
+    /// The fallback exists because the first thing someone does with this app is open it before
+    /// anything is installed, and an empty box at that moment tells them nothing about whether their
+    /// server was picked up. It is labelled as coming from the config so it can never be mistaken for
+    /// evidence that protection is actually running.
+    /// </summary>
+    private async Task RefreshProfilesAsync(bool serviceRunning)
     {
-        var response = await _pipe.ListProfilesAsync();
-        ProfilesText.Text = response.Success ? response.Message : response.Message;
+        if (serviceRunning)
+        {
+            var response = await _pipe.ListProfilesAsync();
+            if (response.Success)
+            {
+                ProfilesText.Text = response.Message;
+                return;
+            }
+        }
+
+        var (profiles, error) = _config.Load();
+        if (error is not null || profiles.Count == 0)
+        {
+            ProfilesText.Text = Strings.Current["ProfilesUnavailable"];
+            return;
+        }
+
+        ProfilesText.Text = Strings.Current["ProfilesFromConfig"] + Environment.NewLine + string.Join(
+            Environment.NewLine,
+            profiles.Select(p => $"  {p.Name}: :{p.PublicPort} -> {p.BackendHost}:{p.BackendPort}"
+                              + (p.ProtectedUsernames.Count > 0 ? $"  ({p.ProtectedUsernames.Count} protected name(s))" : "")));
     }
 
     private async Task RefreshBansAsync()
@@ -298,7 +326,7 @@ public partial class MainWindow : Window
         }
 
         await RefreshAsync();
-        await RefreshProfilesAsync();
+        await RefreshProfilesAsync(_service.GetStatus().State == ServiceState.Running);
     }
 
     // ------------------------------------------------------------------ security check

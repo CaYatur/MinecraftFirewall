@@ -190,7 +190,7 @@
                             <StackPanel>
                                 <TextBlock Style="{StaticResource H2}" Text="{loc:T LeakHeading}"/>
                                 <TextBlock Style="{StaticResource Muted}" Text="{loc:T LeakBlurb}"/>
-                                <Button Content="{loc:T BtnRunCheck}" Style="{StaticResource PrimaryButton}"
+                                <Button x:Name="BtnRunCheckPage" Content="{loc:T BtnRunCheck}" Style="{StaticResource PrimaryButton}"
                                         Click="BtnRunCheck_Click" HorizontalAlignment="Left" Margin="0,15,0,0"/>
                             </StackPanel>
                         </Border>

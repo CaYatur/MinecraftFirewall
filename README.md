@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-271%20passing-4ade80?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-282%20passing-4ade80?style=flat-square">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078d4?style=flat-square">
   <img alt=".NET" src="https://img.shields.io/badge/.NET-10-512bd4?style=flat-square">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
@@ -21,36 +21,43 @@ mode. The genuine owner joins normally and is never asked for a password; everyo
 
 ## Quick start
 
-**1.** Download the latest release and unzip it somewhere permanent, e.g. `C:\MinecraftFirewall`.
+**1.** Download **`MinecraftFirewall-setup.exe`** from
+[Releases](https://github.com/CaYatur/MinecraftFirewall/releases) and run it. It installs the
+background service, sets it to start with Windows, and puts a control panel in your Start Menu.
+Nothing else needs installing first — not even .NET.
 
-**2.** In your server's `server.properties`, hide the real server from the internet:
+**2.** In your server's `server.properties`, move the real server out of the way and hide it:
 
 ```properties
 server-ip=127.0.0.1
 server-port=25566
 ```
 
-> ⚠️ Also make sure port `25566` has **no** router port-forward and **no** inbound firewall rule.
-> This is the single most important step — the proxy protects nothing if players can still reach the
-> server directly.
+> This is the single most important step. The firewall protects nothing if players can still reach
+> your server directly. Once you have done it, the control panel's **Security check** page will
+> confirm it for you — it genuinely tries to connect, rather than taking your word for it.
 
-**3.** Open `appsettings.json` and point a profile at it:
+**3.** Open the control panel, go to **Servers**, and point it at your server:
 
-```jsonc
-"ServerProfiles": [
-  {
-    "Name": "MyServer",
-    "PublicPort": 25565,      // what players connect to
-    "BackendHost": "127.0.0.1",
-    "BackendPort": 25566,     // the real server, from step 2
-    "ProtectedUsernames": [
-      { "Username": "YourAdminName", "RequirePremium": true }
-    ]
-  }
-]
-```
+<p align="center">
+  <img src="docs/images/screens/servers.png" alt="The Servers page: name, public port, real server address and port, protected usernames, and allowed domains" width="820">
+</p>
 
-**4.** Start your Minecraft server, then start the firewall:
+**4.** Press **Save and restart service**. Players keep connecting to your normal address on port
+`25565` — nothing changes for them.
+
+**5.** Run the **Security check**. Four green rows mean the firewall is genuinely in front of your
+server rather than beside it:
+
+<p align="center">
+  <img src="docs/images/screens/security.png" alt="The Security check page showing four passing checks: real server binding, reachability from the network, the firewall accepting players, and Windows Firewall rules" width="820">
+</p>
+
+<details>
+<summary><b>Prefer to run it by hand, without the installer?</b></summary>
+
+Download the plain zip from Releases instead, unzip it somewhere permanent, edit `appsettings.json`
+directly, and run:
 
 ```bash
 MinecraftFirewall.Proxy.exe
@@ -62,16 +69,45 @@ MinecraftFirewall.Proxy.exe
 [10:14:03 INF] Refreshed .../output/datacenter/ipv4.txt (29062 ranges).
 ```
 
-**5.** Players still connect to your normal address on port `25565`. Nothing changes for them.
-
-> **Run it as Administrator** if you want real machine-wide firewall bans. Without elevation everything
-> still works, but repeat offenders are only blocked inside the proxy — it says so clearly at startup.
-
-To keep it running permanently, install it as a Windows service:
+Run it **as Administrator** for real machine-wide firewall bans. Without elevation everything still
+works, but repeat offenders are only blocked inside the proxy — it says so clearly at startup. To keep
+it running permanently:
 
 ```bash
-sc.exe create MinecraftFirewall binPath= "C:\MinecraftFirewall\MinecraftFirewall.Proxy.exe" start= auto
+sc.exe create MinecraftFirewall binPath= "\"C:\MinecraftFirewall\MinecraftFirewall.Proxy.exe\"" start= auto
 ```
+
+The inner quotes are not a typo: without them Windows stores an unquoted service path, which is a
+privilege-escalation hazard whenever the path contains a space.
+
+</details>
+
+---
+
+## The control panel
+
+Everything is manageable from the app — you never have to edit JSON unless you want to.
+
+<p align="center">
+  <img src="docs/images/screens/status.png" alt="The Status page: service controls, a security check summary, the servers being protected, and recent activity" width="820">
+</p>
+
+| Page | What it answers |
+|---|---|
+| **Status** | Is protection running? Start, stop, install or remove the service; see live activity. |
+| **Servers** | Which servers am I fronting, on which ports, with which protected usernames? |
+| **Security check** | Can anyone reach past me to the real server? |
+| **Blocked IPs** | Who is banned right now, and until when? Unban with one click. |
+| **Activity log** | What just happened? The service's own log, tailed live. |
+| **Settings** | Language, start-up behaviour, and the optional features that are off by default. |
+
+English and Turkish, switchable without restarting:
+
+<p align="center">
+  <img src="docs/images/screens/settings.png" alt="The Settings page with English and Turkish language options, start-up mode, and optional features" width="820">
+</p>
+
+It also lives in the system tray, so closing the window leaves protection running.
 
 ---
 
@@ -295,8 +331,10 @@ Firewall COM API and Windows named-pipe ACLs.
 
 ```
 src/MinecraftFirewall.Proxy/    The service itself
+src/MinecraftFirewall.App/      The control panel (WPF)
 src/MinecraftFirewall.Admin/    Companion CLI
-tests/MinecraftFirewall.Tests/  271 tests — no real server, no admin rights, no real firewall touched
+installer/                      Inno Setup script + build.ps1 that produces the setup .exe
+tests/MinecraftFirewall.Tests/  282 tests — no real server, no admin rights, no real firewall touched
 tools/                          Diagnostic client used to verify wire behaviour against a real server
 docs/plan.md                    Full design doc: every decision, and how each was verified
 ```
