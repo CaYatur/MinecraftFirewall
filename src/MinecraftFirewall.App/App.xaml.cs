@@ -70,8 +70,10 @@ public partial class App : Application
             }
             else if (install)
             {
-                // Started here rather than left to the installer: the point of running setup is a
-                // machine that is protected when it finishes, not one that will be after a reboot.
+                // Started here rather than left to the installer, and on the upgrade path as much as
+                // the first install: the point of running setup is a machine that is protected when it
+                // finishes, not one that will be after a reboot. An upgrade that leaves the service
+                // stopped is the worst version of this, because everything looks like it worked.
                 var (started, startMessage) = control.StartAsync().GetAwaiter().GetResult();
                 if (!started)
                     Log("service start", startMessage);

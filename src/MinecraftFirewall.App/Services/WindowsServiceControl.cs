@@ -126,6 +126,14 @@ public sealed class WindowsServiceControl
         if (!File.Exists(exePath))
             return (false, $"Could not find the service executable next to this app:\n{exePath}");
 
+        // An upgrade reaches here with the service already registered, and `sc create` fails outright
+        // on that. Treating the failure as fatal is how an upgrade ended up leaving the machine
+        // unprotected: the installer stops the service, the create fails, nothing starts it again, and
+        // the only sign is a status page nobody was looking at. Reconfiguring instead also handles the
+        // case that makes it necessary — an install path that has changed since last time.
+        if (GetStatus().State != ServiceState.NotInstalled)
+            return await ReconfigureAsync(exePath).ConfigureAwait(false);
+
         var (code, output) = await RunScAsync(
             "create", ServiceName,
             // Quoted deliberately, and the quotes have to survive all the way into the registry.
@@ -146,6 +154,26 @@ public sealed class WindowsServiceControl
             "Protects Minecraft servers running in offline mode: username verification, VPN blocking and firewall bans.").ConfigureAwait(false);
 
         return (true, "Service installed and set to start automatically with Windows.");
+    }
+
+    /// <summary>
+    /// Points an already-registered service at this copy of the executable.
+    ///
+    /// The quoting matters here for exactly the reason it does in <see cref="InstallAsync"/>: sc.exe
+    /// stores the argument verbatim as the ImagePath, and an unquoted path under "C:\Program Files"
+    /// makes Windows try C:\Program.exe first. An upgrade must not quietly reintroduce the hole the
+    /// original install avoided.
+    /// </summary>
+    private async Task<(bool Success, string Message)> ReconfigureAsync(string exePath)
+    {
+        var (code, output) = await RunScAsync(
+            "config", ServiceName,
+            "binPath=", $"\"{exePath}\"",
+            "start=", "auto").ConfigureAwait(false);
+
+        return code == 0
+            ? (true, "Service updated to this version and set to start automatically with Windows.")
+            : (false, $"sc config failed:\n{output}");
     }
 
     public async Task<(bool Success, string Message)> UninstallAsync()
