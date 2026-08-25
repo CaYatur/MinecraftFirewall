@@ -102,7 +102,11 @@ Everything is manageable from the app — you never have to edit JSON unless you
 | **Activity log** | What just happened? The service's own log, tailed live. |
 | **Settings** | Language, start-up behaviour, and the optional features that are off by default. |
 
-English and Turkish, switchable without restarting:
+English and Turkish, switchable without restarting — every page, not just the menus:
+
+<p align="center">
+  <img src="docs/images/screens/protection-turkish.png" alt="The Protection page rendered in Turkish" width="820">
+</p>
 
 <p align="center">
   <img src="docs/images/screens/settings.png" alt="The Settings page with English and Turkish language options, start-up mode, and optional features" width="820">
@@ -125,6 +129,7 @@ Identity is only the first question. Everything below runs whether or not a user
 | **Admission control** | Connection floods. Separate caps per address, per /24, per minute, and overall — because a botnet spread across one subnet is invisible per-address and obvious per-subnet. | On |
 | **Bot scoring** | Automated joins. Logging in without ever asking for the server list, working through a list of usernames, reconnecting on a metronome. | On, **reports only** |
 | **Deep inspection** | Packets no Minecraft client sends: impossible coordinates, oversized frames, malformed plugin messages, and Log4j-style payloads in chat, usernames, signs and books. | On |
+| **Crawler blocking** | Server-indexing sites that sweep for Minecraft servers. They announce their own domain in the field meant for yours, so they identify themselves. | On, when allowed domains are set |
 | **Decoy ports** | Port scanners. Nothing advertises these ports, so anything touching one is enumerating rather than playing. | Off |
 | **Threat lists** | Addresses seen attacking elsewhere, imported from public feeds. | On, **scores only** |
 | **Anomaly detection** | Whatever the rules above did not anticipate. Learns the shape of ordinary connections to *your* server and reports what does not fit. | Off, **reports only** |
@@ -147,6 +152,21 @@ client produces them by playing.
 during the learning window becomes part of the baseline. Switch it on at a quiet time. It never
 refuses anyone, and there is no setting to change that: what it detects is "unlike your other
 connections", which is not the same claim as "malicious".
+
+### Server-indexing crawlers
+
+Sites that catalogue Minecraft servers sweep address ranges looking for them, and they give
+themselves away. A Minecraft client puts the address the player typed into its Handshake packet, so
+somebody who was given a raw IP sends that IP. A crawler has no address to send — it found you by
+scanning — so it sends its own domain instead: its brand, in the field meant for your server's name.
+
+Once an address has announced three different domains that aren't yours, it is banned for a month
+rather than the usual few hours, because an indexing service is on a schedule and will otherwise be
+back next week. A **raw IP** in that field never escalates, which matters more than it sounds: testing
+your own server by IP produces exactly that pattern, and treating the two the same would ban you from
+your own machine.
+
+This only does anything if you have set allowed domains — with no list, nothing is a mismatch.
 
 ### Injection payloads
 
@@ -244,6 +264,26 @@ sequenceDiagram
 > The first account to successfully verify claims the name **permanently**. Set this up before someone
 > else takes the name — it can't retroactively un-claim a name an attacker already grabbed.
 
+### Players can lock their own name
+
+You don't have to list every name worth protecting. Any player can type **`/premium`** in chat to be
+told what locking their name would do, and **`/premium confirm`** to go ahead. They're disconnected
+with instructions, rejoin with the genuine Minecraft account, and the name is theirs permanently.
+
+```
+/premium            → explains what this does, and that it can't be undone
+/premium confirm    → arms it; rejoin with the real account
+```
+
+This works whether or not you've switched on auto-claim, because that setting decides whether
+*everyone* is offered the challenge — a different question from whether one person asked to be.
+
+It's safe for the same reason auto-claim is, and the reason is the whole argument: Mojang is asked
+whether *that username* has an active session, so the only account that can ever answer for a name is
+the one that owns it. Somebody squatting a name with a cracked client can arm this all they like —
+the challenge they then have to pass is one only the real owner can pass, and a failure records
+nothing at all.
+
 ---
 
 ## Everything it does
@@ -310,6 +350,13 @@ apply.
 | `Honeypot` | Decoy ports. Off by default; ports are pre-filled. |
 | `ThreatIntel` | Imported public threat feeds, and where this machine writes its own findings. |
 | `AnomalyDetection` | The learned baseline. Off by default, and reports only. |
+
+### Upgrading
+
+Your `appsettings.json` is never overwritten — it holds your servers and protected usernames. That
+means a config written by an older version has no section for settings added since, and the Protection
+page will say so and offer to add them, copying the shipped defaults across without touching anything
+you set.
 | `IdentityPersistence` | Where learned passwords, IPs and premium pins are stored between restarts. |
 
 ### Turkish messages
