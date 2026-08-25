@@ -104,6 +104,10 @@ Everything is manageable from the app — you never have to edit JSON unless you
 | **Activity log** | What just happened? The service's own log, tailed live. |
 | **Settings** | Language, start-up behaviour, and the optional features that are off by default. |
 
+<p align="center">
+  <img src="docs/images/screens/players.png" alt="The Players page: the accounts one server knows, and one of them opened to show its history, the weighted reasons its address looks suspicious, and the actions available" width="820">
+</p>
+
 English and Turkish, switchable without restarting — every page, not just the menus:
 
 <p align="center">

@@ -100,6 +100,46 @@
                 </Setter>
             </Style>
 
+            <!--
+                A clickable row in a list.
+
+                It exists because the ordinary Button template centres its content and cannot be
+                talked out of it: the ContentPresenter's alignment is written into the template, so
+                setting HorizontalContentAlignment on the button itself does nothing. A row whose
+                columns are centred does not line up with the header above it, which is exactly how
+                this looked the first time it was opened.
+            -->
+            <Style x:Key="RowButton" TargetType="Button">
+                <Setter Property="Foreground" Value="{StaticResource Text}"/>
+                <Setter Property="Background" Value="#1C1A20"/>
+                <Setter Property="BorderBrush" Value="{StaticResource Border}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="12,8"/>
+                <Setter Property="FontFamily" Value="Segoe UI"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Chrome" CornerRadius="3"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                                                  Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Chrome" Property="Background" Value="#272229"/>
+                                    <Setter TargetName="Chrome" Property="BorderBrush" Value="#4A3038"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                 <Setter Property="Background" Value="{StaticResource Accent}"/>
                 <Setter Property="BorderBrush" Value="#FF3A46"/>
