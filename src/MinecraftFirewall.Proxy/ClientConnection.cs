@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using MinecraftFirewall.Proxy.Anomaly;
 using MinecraftFirewall.Proxy.Defense;
 using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.Identity.Premium;
@@ -43,6 +44,7 @@ public static class ClientConnection
         PremiumLoginHandshake premiumHandshake,
         BotDetector botDetector,
         InspectionOptions inspection,
+        AnomalyDetector anomalyDetector,
         ILogger logger,
         CancellationToken hostShutdown)
     {
@@ -110,7 +112,7 @@ public static class ClientConnection
 
         await HandleLoginAsync(client, clientStream, handshakeFrame, handshake, profile, remoteAddress,
             policyEngine, identityOptions, dangerousCommands, messages, premiumHandshake, botDetector, inspection,
-            logger, preLoginCts, hostShutdown).ConfigureAwait(false);
+            anomalyDetector, logger, preLoginCts, hostShutdown).ConfigureAwait(false);
     }
 
     private static async Task HandleStatusAsync(TcpClient client, NetworkStream clientStream, Frame handshakeFrame,
@@ -135,8 +137,8 @@ public static class ClientConnection
     private static async Task HandleLoginAsync(TcpClient client, NetworkStream clientStream, Frame handshakeFrame, HandshakeInfo handshake,
         ServerProfile profile, IPAddress remoteAddress, PolicyEngine policyEngine, IdentityOptions identityOptions,
         IReadOnlyCollection<string> dangerousCommands, MessagesOptions messages, PremiumLoginHandshake premiumHandshake,
-        BotDetector botDetector, InspectionOptions inspection, ILogger logger, CancellationTokenSource preLoginCts,
-        CancellationToken hostShutdown)
+        BotDetector botDetector, InspectionOptions inspection, AnomalyDetector anomalyDetector, ILogger logger,
+        CancellationTokenSource preLoginCts, CancellationToken hostShutdown)
     {
         Frame loginStartFrame;
         string username;
@@ -262,6 +264,11 @@ public static class ClientConnection
                     identityOptions, dangerousCommands, messages, policyEngine, inspection, logger);
 
                 await PumpWithInspectionAsync(client, clientIo, backendStream, inspector, packetIds, hostShutdown).ConfigureAwait(false);
+
+                // After the session, not during it. What the model learns from is the shape of a whole
+                // conversation — how long it lasted, how it was paced, what mix of packets it carried —
+                // and none of that exists until the connection is over.
+                ScoreFinishedSession(inspector, anomalyDetector, profile, username, remoteAddress, logger);
             }
             else
             {
@@ -273,6 +280,44 @@ public static class ClientConnection
             // leaveInnerOpen: true, so this releases the cipher state only — the socket's lifetime
             // still belongs to the caller's `using` on the TcpClient.
             cipherStream?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Feeds a finished connection to the anomaly baseline and reports it if it does not fit.
+    ///
+    /// Reports only. What the model detects is "unlike the other connections to this server", which is
+    /// a weaker claim than "malicious" and cannot be strengthened into one from here — a server whose
+    /// players are all in one timezone will score an unusual-hours visitor as anomalous, correctly and
+    /// unhelpfully. Only a person can supply the missing judgement, so the finding goes where a person
+    /// will read it.
+    /// </summary>
+    private static void ScoreFinishedSession(PlayStateInspector inspector, AnomalyDetector anomalyDetector,
+        ServerProfile profile, string username, IPAddress remoteAddress, ILogger logger)
+    {
+        if (!anomalyDetector.Enabled)
+            return;
+
+        try
+        {
+            ConnectionFeatures features = inspector.BuildFeatures(DateTimeOffset.UtcNow);
+
+            // Scored against the model as it stands, then added to the baseline — in that order, so a
+            // connection is never compared against a baseline it is already part of.
+            AnomalyVerdict? verdict = anomalyDetector.Score(remoteAddress, features);
+            anomalyDetector.Observe(features, wasClean: !inspector.HadViolation);
+
+            if (verdict is { Unusual: true } unusual)
+            {
+                logger.LogWarning("[{Profile}] '{Username}' ({Ip}) does not resemble this server's usual traffic " +
+                                  "(anomaly score {Score:0.00}): {Detail}. Reported only — nothing was refused.",
+                    profile.Name, username, remoteAddress, unusual.Score, unusual.Description);
+            }
+        }
+        catch (Exception ex)
+        {
+            // An optional, report-only extra must never affect a connection that has already finished.
+            logger.LogDebug(ex, "[{Profile}] anomaly scoring failed for '{Username}'.", profile.Name, username);
         }
     }
 

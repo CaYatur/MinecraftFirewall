@@ -1,6 +1,7 @@
 using MinecraftFirewall.Proxy;
 using MinecraftFirewall.Proxy.Admin;
 using MinecraftFirewall.Proxy.Alerts;
+using MinecraftFirewall.Proxy.Anomaly;
 using MinecraftFirewall.Proxy.Defense;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity;
@@ -38,6 +39,7 @@ builder.Services.Configure<BotDefenseOptions>(builder.Configuration.GetSection(B
 builder.Services.Configure<HoneypotOptions>(builder.Configuration.GetSection(HoneypotOptions.SectionName));
 builder.Services.Configure<ThreatIntelOptions>(builder.Configuration.GetSection(ThreatIntelOptions.SectionName));
 builder.Services.Configure<InspectionOptions>(builder.Configuration.GetSection(InspectionOptions.SectionName));
+builder.Services.Configure<AnomalyOptions>(builder.Configuration.GetSection(AnomalyOptions.SectionName));
 
 builder.Services.Configure<AlertOptions>(builder.Configuration.GetSection(AlertOptions.SectionName));
 
@@ -57,6 +59,7 @@ builder.Services.AddSingleton<VpnIntelligence>();
 builder.Services.AddSingleton<ThreatIntelligence>();
 builder.Services.AddSingleton<ConnectionGovernor>();
 builder.Services.AddSingleton<BotDetector>();
+builder.Services.AddSingleton<AnomalyDetector>();
 builder.Services.AddSingleton<IIpInfoClient, IpInfoClient>();
 
 // One RSA keypair for the whole process, generated at startup — the same thing a real Notchian

@@ -531,3 +531,146 @@ tolerated, it can be added as an opt-in enhancement — it is not required for t
 
 - `dotnet build` / `dotnet test` after each stage — every automated test above runs without a real Minecraft server, admin rights, or touching the real Windows Firewall
 - Manual end-to-end, staged: Stage 1 first against one real server (normal login, protected-name-from-wrong-IP denial, VPN-flagged IP denial, status ping still works), then a second profile/server to confirm isolation + shared bans. Stage 3 adds command logging/dangerous-command and the register/login chat flow against the compression settings Stage 2 determined. Stage 4 adds a real premium account connecting to a `PremiumRequired` name, and a cracked-client attempt against the same name confirmed denied.
+
+---
+
+# Stage 5 — defence beyond identity (built after v1.1.0)
+
+Stages 1–4 answer one question: *is this person who they say they are?* Stage 5 exists because that
+question is not the only one, and an attacker who does not care about identity at all — a flood, a
+scanner, a crash payload — was previously met by nothing but a rate limiter.
+
+## What was built, and where each thing is allowed to conclude something
+
+The organising idea is a split between **things that are impossible** and **things that are unusual**,
+and it runs through every component here. Impossible things — a NaN coordinate, a username longer than
+the protocol's own 16-character limit, a Log4j lookup in a chat message — are refused with no
+hesitation and no configuration, because there is no client that produces them and therefore nobody to
+apologise to. Unusual things — an unusually fast player, an oddly regular reconnect pattern, an address
+on somebody else's blocklist — are reported, scored, and left to a person, because "unusual" is not
+"malicious" and this proxy is not well placed to close that gap.
+
+Getting the split wrong in either direction is a real failure. Treating an assumption as a fact bans
+legitimate players. Treating a fact as an assumption lets an exploit through while writing a log line
+about it.
+
+| Component | Question it answers | What it may do |
+|---|---|---|
+| `Defense/ConnectionGovernor` | Should this socket become a connection at all? | Refuse, at accept time |
+| `Defense/BotDetector` | Does this join behave like a person? | Score; refuse only if the admin opts in |
+| `Defense/HoneypotService` | Is anything touching ports nothing advertises? | Strike, through the shared ban path |
+| `Defense/ThreatIntelligence` | Has this address attacked elsewhere? | Score; block only if the admin opts in |
+| `Inspection/PayloadScanner` | Is this text an attack on whatever reads it next? | Refuse |
+| `Inspection/MovementAnalyzer` | Are these coordinates real? Is this speed possible? | Refuse the first; report the second |
+| `Anomaly/AnomalyDetector` | Is this connection unlike the others? | Report only, always |
+
+## Decisions worth recording
+
+**Admission control lives in the accept loop, not the connection handler.** Every check further in
+costs a task, a buffer and at least one read, and a flood is an attempt to make the server pay those
+costs faster than it can afford. The refusal has to be cheaper than the attack.
+
+**Four separate flood limits, because they catch different shapes.** One address opening many sockets
+is caught per address. A botnet spread across neighbouring addresses is invisible per-address and
+obvious per-/24. Reconnect storms never appear in a concurrency figure at all, so they need a rate
+limit. And anything distributed widely enough to slip under all three meets a global ceiling.
+
+**Defensive mode is a mode, not a setting.** Tighter limits do cost legitimate players something — a
+laggy reconnect loop can trip them — so the cost is only paid while an accept-rate threshold says
+something is actually happening.
+
+**The bot score is a sum, not a checklist.** Every individual signal has an innocent explanation: a
+player on a flaky connection reconnects repeatedly, someone's username genuinely is "Player4821", a
+launcher can skip the server-list ping. What no real player does is trip several at once. It ships in
+report-only mode for the same reason this plan has always preferred fail-closed to fail-guessing:
+nobody knows what their own traffic scores until they have watched it.
+
+**The injection scan de-obfuscates instead of pattern-matching.** Log4j's lookup syntax can spell
+`${jndi:` as `${${::-j}${::-n}${::-d}${::-i}:`, which no literal search finds. Stripping the syntax
+that does the obfuscating and searching what remains inverts the problem: instead of enumerating
+obfuscations, it removes the tools used to build them.
+
+**Honeypot hits route through the existing strike and ban path.** Not a parallel one, and this is the
+point rather than an implementation detail: it is what keeps the allowlist honest. Loopback, the local
+network and anything in NeverBan stay unbannable, so an admin scanning their own machine cannot lock
+themselves out — and the standing guarantee that a premium username's real owner is never refused
+survives the feature being switched on.
+
+**There is no central threat-intelligence service, deliberately.** A shared blocklist that anyone can
+write to by tripping a honeypot is a denial-of-service tool aimed at whoever spoofs their way onto it,
+and hosting one would mean running infrastructure this project does not have. What exists instead is a
+reader for any list served as one address per line — the format every public feed already uses — and a
+writer that produces the same format, so a community that wants a shared feed can host the file.
+
+**Anomaly detection calibrates its own threshold.** The textbook "scores near 0.5 are normal" is only
+true for data shaped like the paper's examples; measured against a tight cluster of similar sessions,
+perfectly ordinary connections score 0.62. A fixed cut-off would report everything on one server and
+nothing on another, so the cut-off is taken from a percentile of the server's own baseline.
+
+## Rejected, and why
+
+**Deep inspection of the server-to-client direction.** The obvious symmetric design, and not worth it.
+An oversized chunk packet is the server talking to the player, not a way into the server, so parsing
+that direction would cost a busy server real time per chunk for no security gain. That direction gets
+size and rate ceilings and is otherwise relayed byte-for-byte.
+
+**Enforcing a username character set.** Vanilla permits only letters, digits and underscores, and
+enforcing that would catch nothing the injection scan does not already catch while breaking every
+Geyser and Floodgate setup, which prefix Bedrock players with a dot. The length limit *is* enforced,
+because it is a protocol fact; the character set is not, because it is a client convention.
+
+**Making `AllowedHostnames` stronger.** It cannot be made stronger — the hostname is a string the
+client chose, and nothing binds it to how the connection was made. SRV-based secret ports were
+considered and dropped: they need DNS API access, and an attacker who learns the port walks in anyway.
+What was done instead is to change the *reputation* consequence rather than the check — a refused
+mismatch now feeds the bot score, so an address that keeps trying is treated as enumerating rather
+than being forgotten between connections — and to say plainly, in the README and in the config, that
+the control which actually enforces "only through my domain" is the backend being unreachable.
+
+**Letting movement heuristics kick by default.** Rejected outright. This proxy sees coordinates and
+nothing else: no ice, no boats, no elytra, no riptide tridents, no speed potions, no plugin teleports,
+all of which read identically to a speed cheat. A firewall that kicks legitimate players is worse than
+no firewall, and the person running it would have no way to tell it was the firewall's fault.
+
+## Found by running attacks at the live proxy, not by tests
+
+Three defects survived a green test suite and were caught by pointing a script at a running instance:
+
+- A 233-character username carrying `${jndi:ldap://…}` was accepted and written to the log verbatim —
+  the exact path Log4Shell took into Minecraft servers. Now refused against the protocol's own
+  16-character limit before anything logs, evaluates or forwards it, with the refusal itself reporting
+  a sanitised form.
+- A flood from an allowlisted address logged one warning per refused connection, so under load the log
+  became the outage. Throttled to one per address per minute.
+- The threat feed downloaded twice from one configured URL: .NET configuration binding *appends* to a
+  list that already has items rather than replacing it, so a default named in both the options class
+  and appsettings.json can never be removed by editing the file.
+
+A fourth was caught by writing tests that drive whole packet streams through the real inspector rather
+than testing analysers in isolation: rotation packets — which a client sends constantly — were clearing
+the movement history, so the speed check almost never had two positions to compare and effectively did
+not run. Every unit test of the analyser passed throughout.
+
+A fifth belongs to the control panel rather than the proxy, and was the most quietly destructive of
+them: saving a server rename rewrote appsettings.json through `JsonNode`, which deletes every comment
+in the file. The class comment said regenerating the file would destroy the explanations, and then the
+mechanism did exactly that. Writes now splice new text over the exact span of the value being changed.
+
+## Still not verified against the real thing
+
+Honest continuation of the list this document already keeps:
+
+- **Movement analysis has never been observed against a real Minecraft client.** It is covered by unit
+  tests and by pipeline tests that drive synthetic movement packets through the real inspector, but no
+  actual player has moved fast enough in front of it. The field layout it depends on is documented for
+  protocol 774; if that is wrong, the analyser declines to interpret rather than guessing, and says so
+  once in the log.
+- **Anomaly detection has never seen a real server's traffic.** Its behaviour on synthetic baselines is
+  tested; what a real Minecraft server's connection distribution looks like, and therefore where its
+  calibrated cut-off settles, is unknown.
+- **The honeypot was verified live**, including that a private address correctly went unbanned — but
+  only against a scanner written for the purpose, not against a real one in the wild.
+- **The installer's elevated half** — service registration, the firewall rule, writing to Program Files
+  — needs a UAC prompt answered by a person and was not exercised in the build environment. Its
+  packaging half (file layout, upgrade preserving an edited config, uninstall keeping it) was tested
+  for real against a non-elevated variant of the same script.

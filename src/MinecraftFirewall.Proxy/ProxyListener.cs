@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using MinecraftFirewall.Proxy.Anomaly;
 using MinecraftFirewall.Proxy.Defense;
 using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.Identity.Premium;
@@ -28,6 +29,7 @@ public sealed class ProxyListener(
     ConnectionGovernor governor,
     BotDetector botDetector,
     InspectionOptions inspection,
+    AnomalyDetector anomalyDetector,
     ILogger logger)
 {
     public async Task RunAsync(CancellationToken ct)
@@ -104,7 +106,7 @@ public sealed class ProxyListener(
         try
         {
             await ClientConnection.HandleAsync(client, profile, policyEngine, identityOptions, dangerousCommands,
-                messages, premiumHandshake, botDetector, inspection, logger, ct).ConfigureAwait(false);
+                messages, premiumHandshake, botDetector, inspection, anomalyDetector, logger, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

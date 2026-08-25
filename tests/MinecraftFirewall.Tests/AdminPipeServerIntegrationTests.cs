@@ -42,7 +42,9 @@ public class AdminPipeServerIntegrationTests
             CacheDirectory = Path.Combine(Path.GetTempPath(), "MinecraftFirewallTests", Guid.NewGuid().ToString("N")),
         });
         var refreshService = new IpListRefreshService(new VpnIntelligence(), vpnIntelOptions, new UnreachableHttpClientFactory(), NullLogger<IpListRefreshService>.Instance);
-        return new AdminCommandHandler([profile], banService, refreshService, NullLogger<AdminCommandHandler>.Instance);
+        return new AdminCommandHandler([profile], banService, refreshService, DefenseTestFactory.CreateGovernor(),
+            DefenseTestFactory.CreateThreatIntelligence(), DefenseTestFactory.CreateAnomalyDetector(),
+            NullLogger<AdminCommandHandler>.Instance);
     }
 
     [Fact]

@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using MinecraftFirewall.App.Localization;
 using MinecraftFirewall.App.Services;
+using MinecraftFirewall.Proxy.Admin;
 using Forms = System.Windows.Forms;
 
 namespace MinecraftFirewall.App;
@@ -131,6 +132,7 @@ public partial class MainWindow : Window
         PageStatus.Visibility = Show(page == "Status");
         PageServers.Visibility = Show(page == "Servers");
         PageSecurity.Visibility = Show(page == "Security");
+        PageDefense.Visibility = Show(page == "Defense");
         PageBans.Visibility = Show(page == "Bans");
         PageLog.Visibility = Show(page == "Log");
         PageSettings.Visibility = Show(page == "Settings");
@@ -139,6 +141,12 @@ public partial class MainWindow : Window
 
         if (page == "Bans")
             _ = RefreshBansAsync();
+
+        if (page == "Defense")
+        {
+            LoadDefenseSettings();
+            _ = RefreshDefenseAsync();
+        }
 
         static Visibility Show(bool visible) => visible ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -161,6 +169,9 @@ public partial class MainWindow : Window
             if (ChkAutoScroll.IsChecked == true)
                 LogScroller.ScrollToEnd();
         }
+
+        if (PageDefense.Visibility == Visibility.Visible)
+            await RefreshDefenseAsync();
 
         if (status.State != _lastState)
             await RefreshProfilesAsync(status.State == ServiceState.Running);
@@ -327,6 +338,147 @@ public partial class MainWindow : Window
 
         await RefreshAsync();
         await RefreshProfilesAsync(_service.GetStatus().State == ServiceState.Running);
+    }
+
+    // ------------------------------------------------------------------ defence
+
+    /// <summary>
+    /// Reads the current defence switches out of appsettings.json.
+    ///
+    /// Every fallback here is the safe direction rather than the convenient one. A file that cannot be
+    /// read must not leave a checkbox claiming a protection is on when nothing has confirmed it, and
+    /// must not leave the two that ship deliberately off — the honeypot and movement kicking —
+    /// looking enabled.
+    /// </summary>
+    private void LoadDefenseSettings()
+    {
+        _suppressEvents = true;
+        try
+        {
+            ChkDdos.IsChecked = _config.GetBool(["DdosProtection", "Enabled"], false);
+            ChkInspection.IsChecked = _config.GetBool(["DeepInspection", "Enabled"], false);
+            ChkInjection.IsChecked = _config.GetBool(["DeepInspection", "ScanForInjectionPayloads"], false);
+            ChkHoneypot.IsChecked = _config.GetBool(["Honeypot", "Enabled"], false);
+            ChkMovement.IsChecked = _config.GetBool(["DeepInspection", "AnalyseMovement"], false);
+            ChkMovementKick.IsChecked = _config.GetBool(["DeepInspection", "KickOnMovementAnomaly"], false);
+            ChkAnomaly.IsChecked = _config.GetBool(["AnomalyDetection", "Enabled"], false);
+
+            string action = _config.GetString(["BotDefense", "Action"], "LogOnly");
+            BotDeny.IsChecked = string.Equals(action, "Deny", StringComparison.OrdinalIgnoreCase);
+            BotLogOnly.IsChecked = !BotDeny.IsChecked!.Value;
+
+            HoneypotPortsText.Text = Strings.Current.Format("HoneypotPorts", ReadHoneypotPorts());
+        }
+        finally
+        {
+            _suppressEvents = false;
+        }
+    }
+
+    private string ReadHoneypotPorts()
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(_config.ConfigPath),
+                new System.Text.Json.JsonDocumentOptions { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true });
+
+            if (document.RootElement.TryGetProperty("Honeypot", out var honeypot) &&
+                honeypot.TryGetProperty("Ports", out var ports))
+            {
+                return string.Join(", ", ports.EnumerateArray().Select(p => p.GetInt32()));
+            }
+        }
+        catch
+        {
+            // Cosmetic only — the ports are shown for information, and the service reads them itself.
+        }
+
+        return "—";
+    }
+
+    /// <summary>Writes one switch back. Every one of these needs the service restarted to take
+    /// effect, which the page says rather than leaving the user to wonder.</summary>
+    private async void DefenseToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressEvents)
+            return;
+
+        var box = (CheckBox)sender;
+        string[] path = ((string)box.Tag).Split('/');
+
+        (bool success, string message) = _config.SetBool(path, box.IsChecked == true);
+        Toast(success ? Strings.Current["SavedNeedsRestart"] : message, success);
+
+        if (!success)
+            LoadDefenseSettings();
+
+        await Task.CompletedTask;
+    }
+
+    private void BotAction_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressEvents)
+            return;
+
+        string action = (string)((RadioButton)sender).Tag;
+        (bool success, string message) = _config.SetString(["BotDefense", "Action"], action);
+        Toast(success ? Strings.Current["SavedNeedsRestart"] : message, success);
+    }
+
+    private async Task RefreshDefenseAsync()
+    {
+        // The live counters only exist inside the running process, so there is no honest fallback for
+        // them — saying the service is not running is the whole answer.
+        AdminResponse status = await _pipe.DefenseStatusAsync();
+        DefenseStatusText.Text = status.Success ? status.Message : Strings.Current["DefenseUnavailable"];
+
+        AdminResponse threats = await _pipe.ListThreatsAsync();
+        ThreatListText.Text = threats.Success ? threats.Message : ReadThreatsFromDisk();
+    }
+
+    /// <summary>
+    /// Reads the honeypot's own record straight off disk when the service is not answering.
+    ///
+    /// Worth doing because this list is the one thing on the page that outlives the process: it is
+    /// written in the same one-address-per-line format the imported feeds use, precisely so it can be
+    /// read by something other than the service. Someone looking at this page after a restart wants to
+    /// know what got caught, and "the service is not running" is a poor answer when the answer is
+    /// sitting in a file.
+    /// </summary>
+    private static string ReadThreatsFromDisk()
+    {
+        try
+        {
+            string path = Path.Combine(LogTailReader.DataDirectory, "threats-observed.txt");
+            if (!File.Exists(path))
+                return Strings.Current["ThreatsNoneYet"];
+
+            string[] entries = [.. File.ReadLines(path)
+                .Where(line => line.Length > 0 && !line.StartsWith('#'))
+                .Take(100)];
+
+            return entries.Length == 0
+                ? Strings.Current["ThreatsNoneYet"]
+                : Strings.Current.Format("ThreatsFromFile", entries.Length) + Environment.NewLine + string.Join(Environment.NewLine, entries);
+        }
+        catch
+        {
+            return Strings.Current["ThreatsNoneYet"];
+        }
+    }
+
+    private async void BtnRestartService_Click(object sender, RoutedEventArgs e)
+    {
+        await RunAsync(async () =>
+        {
+            (bool stopped, string stopMessage) = await _service.StopAsync();
+            if (!stopped)
+                return (false, stopMessage);
+
+            return await _service.StartAsync();
+        });
+
+        LoadDefenseSettings();
     }
 
     // ------------------------------------------------------------------ security check

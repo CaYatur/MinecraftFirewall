@@ -38,6 +38,7 @@
                     <RadioButton x:Name="NavStatus"   Style="{StaticResource NavButton}" Content="{loc:T NavStatus}"   IsChecked="True" Checked="Nav_Checked" Tag="Status"/>
                     <RadioButton x:Name="NavServers"  Style="{StaticResource NavButton}" Content="{loc:T NavServers}"  Checked="Nav_Checked" Tag="Servers"/>
                     <RadioButton x:Name="NavSecurity" Style="{StaticResource NavButton}" Content="{loc:T NavSecurity}" Checked="Nav_Checked" Tag="Security"/>
+                    <RadioButton x:Name="NavDefense" Style="{StaticResource NavButton}" Content="{loc:T NavDefense}" Checked="Nav_Checked" Tag="Defense"/>
                     <RadioButton x:Name="NavBans"     Style="{StaticResource NavButton}" Content="{loc:T NavBans}"     Checked="Nav_Checked" Tag="Bans"/>
                     <RadioButton x:Name="NavLog"      Style="{StaticResource NavButton}" Content="{loc:T NavLog}"      Checked="Nav_Checked" Tag="Log"/>
                     <RadioButton x:Name="NavSettings" Style="{StaticResource NavButton}" Content="{loc:T NavSettings}" Checked="Nav_Checked" Tag="Settings"/>
@@ -258,6 +259,85 @@
                                     <Button Content="{loc:T BtnOpenLogFolder}" Click="BtnOpenLogs_Click" Margin="0,0,12,0"/>
                                     <CheckBox x:Name="ChkAutoScroll" Content="{loc:T ChkFollow}" IsChecked="True" VerticalAlignment="Center"/>
                                 </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- ===================== DEFENCE ===================== -->
+                    <StackPanel x:Name="PageDefense" Visibility="Collapsed">
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T DefLiveTitle}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T DefLiveBlurb}"/>
+                                <Border Style="{StaticResource Console}" Margin="0,12,0,0">
+                                    <TextBlock x:Name="DefenseStatusText" Style="{StaticResource ConsoleText}" Text="…"/>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T DefFloodTitle}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T DefFloodBlurb}"/>
+                                <CheckBox x:Name="ChkDdos" Margin="0,13,0,0" Content="{loc:T ChkDdos}" Click="DefenseToggle_Changed" Tag="DdosProtection/Enabled"/>
+                                <CheckBox x:Name="ChkInspection" Margin="0,10,0,0" Content="{loc:T ChkInspection}" Click="DefenseToggle_Changed" Tag="DeepInspection/Enabled"/>
+                                <CheckBox x:Name="ChkInjection" Margin="0,10,0,0" Content="{loc:T ChkInjection}" Click="DefenseToggle_Changed" Tag="DeepInspection/ScanForInjectionPayloads"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T DefBotTitle}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T DefBotBlurb}"/>
+                                <RadioButton x:Name="BotLogOnly" GroupName="BotAction" Margin="0,13,0,0" Content="{loc:T BotLogOnly}" Checked="BotAction_Changed" Tag="LogOnly"/>
+                                <RadioButton x:Name="BotDeny"    GroupName="BotAction" Margin="0,9,0,0"  Content="{loc:T BotDeny}"    Checked="BotAction_Changed" Tag="Deny"/>
+                                <Border Background="#12141A" BorderBrush="#242833" BorderThickness="1" CornerRadius="3" Padding="11,9" Margin="0,12,0,0">
+                                    <TextBlock Style="{StaticResource Muted}" Text="{loc:T BotActionNote}"/>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T DefHoneypotTitle}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T DefHoneypotBlurb}"/>
+                                <CheckBox x:Name="ChkHoneypot" Margin="0,13,0,0" Content="{loc:T ChkHoneypot}" Click="DefenseToggle_Changed" Tag="Honeypot/Enabled"/>
+                                <TextBlock x:Name="HoneypotPortsText" Style="{StaticResource Muted}" Margin="0,8,0,0"/>
+                                <Border Style="{StaticResource Console}" Margin="0,12,0,0">
+                                    <TextBlock x:Name="ThreatListText" Style="{StaticResource ConsoleText}" Text="…"/>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T DefMovementTitle}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T DefMovementBlurb}"/>
+                                <CheckBox x:Name="ChkMovement" Margin="0,13,0,0" Content="{loc:T ChkMovement}" Click="DefenseToggle_Changed" Tag="DeepInspection/AnalyseMovement"/>
+                                <CheckBox x:Name="ChkMovementKick" Margin="0,10,0,0" Content="{loc:T ChkMovementKick}" Click="DefenseToggle_Changed" Tag="DeepInspection/KickOnMovementAnomaly"/>
+                                <Border Background="#1A0F13" BorderBrush="#3A1620" BorderThickness="1" CornerRadius="3" Padding="11,9" Margin="0,12,0,0">
+                                    <TextBlock Style="{StaticResource Muted}" Foreground="#E8B4BC" Text="{loc:T MovementKickWarning}"/>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T DefAnomalyTitle}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T DefAnomalyBlurb}"/>
+                                <CheckBox x:Name="ChkAnomaly" Margin="0,13,0,0" Content="{loc:T ChkAnomaly}" Click="DefenseToggle_Changed" Tag="AnomalyDetection/Enabled"/>
+                                <Border Background="#12141A" BorderBrush="#242833" BorderThickness="1" CornerRadius="3" Padding="11,9" Margin="0,12,0,0">
+                                    <TextBlock Style="{StaticResource Muted}" Text="{loc:T AnomalyNote}"/>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="{loc:T DefRestartTitle}"/>
+                                <TextBlock Style="{StaticResource Muted}" Text="{loc:T DefRestartBlurb}"/>
+                                <Button Content="{loc:T BtnApplyRestart}" Style="{StaticResource PrimaryButton}"
+                                        HorizontalAlignment="Left" Margin="0,14,0,0" Click="BtnRestartService_Click"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>

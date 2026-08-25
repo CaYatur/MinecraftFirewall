@@ -14,7 +14,12 @@ namespace MinecraftFirewall.App.Services;
 /// </summary>
 public static class LogTailReader
 {
-    public static readonly string LogDirectory = @"C:\ProgramData\MinecraftFirewall\logs";
+    /// <summary>Where the service keeps everything it writes: logs, the identity store, the cached IP
+    /// lists and the honeypot's own record. Machine-wide rather than per-user, because the service
+    /// runs as a system account and no individual user owns its data.</summary>
+    public static readonly string DataDirectory = @"C:\ProgramData\MinecraftFirewall";
+
+    public static readonly string LogDirectory = Path.Combine(DataDirectory, "logs");
 
     public static string? CurrentLogFile()
     {

@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img alt="Tests" src="https://img.shields.io/badge/tests-282%20passing-4ade80?style=flat-square">
+  <img alt="Tests" src="https://img.shields.io/badge/tests-425%20passing-4ade80?style=flat-square">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078d4?style=flat-square">
   <img alt=".NET" src="https://img.shields.io/badge/.NET-10-512bd4?style=flat-square">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
@@ -97,6 +97,7 @@ Everything is manageable from the app — you never have to edit JSON unless you
 | **Status** | Is protection running? Start, stop, install or remove the service; see live activity. |
 | **Servers** | Which servers am I fronting, on which ports, with which protected usernames? |
 | **Security check** | Can anyone reach past me to the real server? |
+| **Protection** | What is the firewall holding off right now? Every defence layer, with switches. |
 | **Blocked IPs** | Who is banned right now, and until when? Unban with one click. |
 | **Activity log** | What just happened? The service's own log, tailed live. |
 | **Settings** | Language, start-up behaviour, and the optional features that are off by default. |
@@ -108,6 +109,56 @@ English and Turkish, switchable without restarting:
 </p>
 
 It also lives in the system tray, so closing the window leaves protection running.
+
+---
+
+## Layers of defence
+
+Identity is only the first question. Everything below runs whether or not a username is protected.
+
+<p align="center">
+  <img src="docs/images/screens/protection.png" alt="The Protection page: live counters, flood limits, bot scoring, decoy ports with a captured address, and movement settings" width="820">
+</p>
+
+| Layer | What it stops | Default |
+|---|---|---|
+| **Admission control** | Connection floods. Separate caps per address, per /24, per minute, and overall — because a botnet spread across one subnet is invisible per-address and obvious per-subnet. | On |
+| **Bot scoring** | Automated joins. Logging in without ever asking for the server list, working through a list of usernames, reconnecting on a metronome. | On, **reports only** |
+| **Deep inspection** | Packets no Minecraft client sends: impossible coordinates, oversized frames, malformed plugin messages, and Log4j-style payloads in chat, usernames, signs and books. | On |
+| **Decoy ports** | Port scanners. Nothing advertises these ports, so anything touching one is enumerating rather than playing. | Off |
+| **Threat lists** | Addresses seen attacking elsewhere, imported from public feeds. | On, **scores only** |
+| **Anomaly detection** | Whatever the rules above did not anticipate. Learns the shape of ordinary connections to *your* server and reports what does not fit. | Off, **reports only** |
+
+Three of those ship deliberately switched off or limited to reporting, and it is worth saying why
+rather than leaving it looking like an oversight.
+
+**Bot scoring** starts in report-only mode because nobody knows what your server's own traffic scores
+until they have watched it for a few days. Turning a heuristic loose before that is how a firewall
+ends up refusing its owner. Watch the Activity log, then switch it to refuse.
+
+**Movement analysis** reports and does not kick. This proxy sees coordinates and nothing else — not
+ice, boats, elytra, riptide tridents, speed potions, or a plugin teleporting somebody. All of those
+look exactly like a speed cheat from here. A server-side anti-cheat plugin has the world state to tell
+them apart; this does not. What it *does* enforce by default is coordinates that are not numbers at
+all — NaN, infinity, positions outside the world — because those are crash inputs, not cheats, and no
+client produces them by playing.
+
+**Anomaly detection** is off because it learns from live traffic, which means an attacker present
+during the learning window becomes part of the baseline. Switch it on at a quiet time. It never
+refuses anyone, and there is no setting to change that: what it detects is "unlike your other
+connections", which is not the same claim as "malicious".
+
+### Injection payloads
+
+Log4Shell reached Minecraft servers through chat, and the reason it worked is still true: player text
+ends up in log formatters, plugin config parsers and web panels, each a different interpreter. This
+scans chat, commands, usernames, signs and books — signs and books included because a payload written
+into one persists in world data long after the connection that delivered it.
+
+The scan de-obfuscates rather than pattern-matches. Log4j's lookup syntax lets `${jndi:...}` be
+written as `${${::-j}${::-n}${::-d}${::-i}:...}`, which no search for "jndi" will ever find, so the
+text is stripped of the syntax that does the obfuscating and the search runs on what is left. That
+inverts the problem: instead of enumerating obfuscations, it removes the tools used to build them.
 
 ---
 
@@ -253,6 +304,12 @@ apply.
 | `VpnIntel` / `IpInfo` | VPN list sources; optional ipinfo.io token for the real-time signal. |
 | `RateLimit` / `FirewallBan` / `NeverBan` | Thresholds, ban duration, and IPs that can never be banned. |
 | `Alerts` | Discord webhook URL and which events to report. Off until you add a URL. |
+| `DdosProtection` | Per-address, per-subnet and overall connection limits, and the defensive mode. |
+| `BotDefense` | Signal weights and whether a high score reports or refuses. |
+| `DeepInspection` | Packet size and rate caps, injection scanning, movement analysis. |
+| `Honeypot` | Decoy ports. Off by default; ports are pre-filled. |
+| `ThreatIntel` | Imported public threat feeds, and where this machine writes its own findings. |
+| `AnomalyDetection` | The learned baseline. Off by default, and reports only. |
 | `IdentityPersistence` | Where learned passwords, IPs and premium pins are stored between restarts. |
 
 ### Turkish messages
@@ -281,6 +338,8 @@ MinecraftFirewall.Admin.exe list-profiles
 MinecraftFirewall.Admin.exe whitelist-add-me MyServer YourAdminName 203.0.113.7
 MinecraftFirewall.Admin.exe require-premium MyServer YourAdminName
 MinecraftFirewall.Admin.exe reload
+MinecraftFirewall.Admin.exe defense-status
+MinecraftFirewall.Admin.exe list-threats
 ```
 
 > **`require-premium` must be followed up in `appsettings.json` straight away.** Every other command
@@ -301,10 +360,29 @@ This section is deliberately not marketing copy. Read it before relying on any o
   attacker already claimed in plain offline mode beforehand.
 - **Your server must be unreachable directly.** If players can still connect to port `25566`, none of
   this applies to them. Verify it yourself; the proxy cannot check this for you.
-- **`AllowedHostnames` is not a cryptographic boundary.** A stock client pointed at your raw IP is
-  correctly refused, but a custom client that *lies* about which domain it used is not stopped by this
-  check alone. For a hard guarantee, put a TCP-fronting proxy (Cloudflare Spectrum, TCPShield) in front
-  and firewall the public port to its IP ranges.
+- **`AllowedHostnames` is not a cryptographic boundary, and cannot be made into one.** The hostname is
+  whatever string the client chose to send; nothing binds it to how the connection was actually made.
+  A stock client pointed at your raw IP is correctly refused, and so is the bulk of IP-scanning
+  traffic — but a custom client that simply *lies* about the field walks straight past it, and no
+  amount of work on this check changes that. Two things were done about it instead. A refused mismatch
+  now counts towards the address's bot score, so an address that keeps trying is treated as
+  enumerating rather than being forgotten between connections. And the control that genuinely enforces
+  "only through my domain" is stated plainly: your real server being unreachable except from this
+  proxy, which is exactly what the Security check page tests. For a hard guarantee at the network
+  level, put a TCP-fronting proxy (Cloudflare Spectrum, TCPShield) in front and firewall the public
+  port to its IP ranges.
+- **Movement analysis is advisory, not anti-cheat.** See the layers table above. Crash inputs are
+  blocked; "moved too fast" is reported, because this proxy cannot see the ice, boat, elytra or plugin
+  teleport that would explain it.
+- **Anomaly detection learns from live traffic**, so an attacker present during its learning window
+  becomes part of the baseline. Only connections that ended cleanly and were never struck are learned
+  from, and a few hundred are required before it says anything — but that narrows the problem rather
+  than removing it.
+- **The bot score is beatable, and its weights say how.** A bot that sends one status ping before each
+  login defeats the highest-weighted signal for a one-line change. The others exist because it then
+  still has to use one username and reconnect at human intervals, which costs considerably more. The
+  arithmetic of what actually reaches the refusal threshold is written into `appsettings.json` rather
+  than left for you to discover.
 - **Your server still sees its own offline UUID** for a premium-verified player, not their real one.
   Verification is authoritative for *access*, not for what your world files record.
 - **The identity store holds password hashes.** They're PBKDF2, not plaintext, but don't hand the file
@@ -334,7 +412,7 @@ src/MinecraftFirewall.Proxy/    The service itself
 src/MinecraftFirewall.App/      The control panel (WPF)
 src/MinecraftFirewall.Admin/    Companion CLI
 installer/                      Inno Setup script + build.ps1 that produces the setup .exe
-tests/MinecraftFirewall.Tests/  282 tests — no real server, no admin rights, no real firewall touched
+tests/MinecraftFirewall.Tests/  425 tests — no real server, no admin rights, no real firewall touched
 tools/                          Diagnostic client used to verify wire behaviour against a real server
 docs/plan.md                    Full design doc: every decision, and how each was verified
 ```

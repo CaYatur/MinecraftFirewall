@@ -1,4 +1,6 @@
 using System.Net;
+using MinecraftFirewall.Proxy.Anomaly;
+using MinecraftFirewall.Proxy.Defense;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.IpIntel;
@@ -17,6 +19,9 @@ public sealed class AdminCommandHandler(
     IReadOnlyList<ServerProfile> profiles,
     FirewallBanService banService,
     IpListRefreshService ipListRefreshService,
+    ConnectionGovernor governor,
+    ThreatIntelligence threatIntelligence,
+    AnomalyDetector anomalyDetector,
     ILogger<AdminCommandHandler> logger)
 {
     private const string NotPersistedNote =
@@ -51,6 +56,8 @@ public sealed class AdminCommandHandler(
                 "require-premium" => RequirePremium(request.Args),
                 "reload" => await ReloadAsync(ct).ConfigureAwait(false),
                 "list-profiles" => ListProfiles(),
+                "defense-status" => DefenseStatus(),
+                "list-threats" => ListThreats(request.Args),
                 "help" or "" => Help(),
                 _ => new AdminResponse(false, $"Unknown command '{request.Command}'. " + Help().Message),
             };
@@ -60,6 +67,60 @@ public sealed class AdminCommandHandler(
             logger.LogError(ex, "Admin command '{Command}' failed unexpectedly.", request.Command);
             return new AdminResponse(false, $"Internal error: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// A snapshot of what the defence layer is doing right now.
+    ///
+    /// Read-only on purpose. The control panel polls this every couple of seconds, and a command that
+    /// could change something would then be one misplaced call away from being invoked on a timer.
+    /// </summary>
+    private AdminResponse DefenseStatus()
+    {
+        var lines = new List<string>
+        {
+            $"Connections open        : {governor.CurrentConnections}",
+            $"Addresses being tracked : {governor.TrackedAddresses}",
+            $"Connections refused     : {governor.TotalRefusals} since start",
+            $"Defensive mode          : {(governor.DefensiveMode ? "ON — limits tightened" : "off")}",
+            $"Threat list (imported)  : {threatIntelligence.ImportedRangeCount} range(s)",
+            $"Threats seen here       : {threatIntelligence.LocalRecordCount} address(es)",
+            $"Anomaly model           : {DescribeAnomalyModel()}",
+        };
+
+        return new AdminResponse(true, string.Join(Environment.NewLine, lines));
+    }
+
+    private string DescribeAnomalyModel()
+    {
+        if (!anomalyDetector.Enabled)
+            return "off";
+
+        if (!anomalyDetector.IsTrained)
+            return $"learning ({anomalyDetector.BaselineSize} clean connections observed so far)";
+
+        return $"trained on {anomalyDetector.BaselineSize}, reported {anomalyDetector.TotalFlagged} of " +
+               $"{anomalyDetector.TotalScored} scored (cut-off {anomalyDetector.Cutoff:0.000})";
+    }
+
+    /// <summary>Lists what this installation caught on its own honeypot ports — first-hand evidence,
+    /// as distinct from the imported lists, which are somebody else's.</summary>
+    private AdminResponse ListThreats(string[] args)
+    {
+        int limit = args.Length > 0 && int.TryParse(args[0], out int parsed) ? Math.Clamp(parsed, 1, 500) : 50;
+
+        IReadOnlyList<LocalThreatRecord> records = threatIntelligence.LocalSnapshot();
+        if (records.Count == 0)
+            return new AdminResponse(true, "Nothing has touched a honeypot port. (The honeypot ships switched off — see Honeypot.Enabled.)");
+
+        var lines = new List<string> { $"{records.Count} address(es) caught here, most recent first:" };
+        foreach (LocalThreatRecord record in records.Take(limit))
+            lines.Add($"  {record.Address,-40} {record.Hits}x  {record.Reason}  (last seen {record.LastSeen:u})");
+
+        if (records.Count > limit)
+            lines.Add($"  … and {records.Count - limit} more.");
+
+        return new AdminResponse(true, string.Join(Environment.NewLine, lines));
     }
 
     private AdminResponse WhitelistAdd(string[] args)
@@ -163,7 +224,9 @@ public sealed class AdminCommandHandler(
         "  unban <ip>                                          Remove a firewall ban\n" +
         "  require-premium <profile> <username>                Require a verified Mojang account for this username\n" +
         "  reload                                               Refresh the VPN/datacenter IP lists now\n" +
-        "  list-profiles                                       List configured server profiles");
+        "  list-profiles                                       List configured server profiles\n" +
+        "  defense-status                                      Live admission-control and threat-list counters\n" +
+        "  list-threats [count]                                Addresses caught on this machine's honeypot ports");
 
     private bool TryFindProfile(string name, out ServerProfile profile, out string? error)
     {

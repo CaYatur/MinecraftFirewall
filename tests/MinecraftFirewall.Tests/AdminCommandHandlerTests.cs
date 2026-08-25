@@ -35,7 +35,9 @@ public class AdminCommandHandlerTests
         });
         var refreshService = new IpListRefreshService(new VpnIntelligence(), vpnIntelOptions, new UnreachableHttpClientFactory(), NullLogger<IpListRefreshService>.Instance);
 
-        var handler = new AdminCommandHandler([profile], banService, refreshService, NullLogger<AdminCommandHandler>.Instance);
+        var handler = new AdminCommandHandler([profile], banService, refreshService, DefenseTestFactory.CreateGovernor(),
+            DefenseTestFactory.CreateThreatIntelligence(), DefenseTestFactory.CreateAnomalyDetector(),
+            NullLogger<AdminCommandHandler>.Instance);
         return new Fixture(handler, profile, banService, gateway);
     }
 

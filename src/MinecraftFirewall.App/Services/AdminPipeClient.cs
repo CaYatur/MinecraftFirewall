@@ -58,6 +58,10 @@ public sealed class AdminPipeClient
 
     public Task<AdminResponse> ListProfilesAsync(CancellationToken ct = default) => SendAsync("list-profiles", ct: ct);
 
+    public Task<AdminResponse> DefenseStatusAsync(CancellationToken ct = default) => SendAsync("defense-status", ct: ct);
+
+    public Task<AdminResponse> ListThreatsAsync(CancellationToken ct = default) => SendAsync("list-threats", ["100"], ct);
+
     public Task<AdminResponse> UnbanAsync(string ip, CancellationToken ct = default) => SendAsync("unban", [ip], ct);
 
     public Task<AdminResponse> ReloadIpListsAsync(CancellationToken ct = default) => SendAsync("reload", ct: ct);

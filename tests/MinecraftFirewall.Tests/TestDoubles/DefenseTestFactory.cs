@@ -1,3 +1,4 @@
+using MinecraftFirewall.Proxy.Anomaly;
 using MinecraftFirewall.Proxy.Defense;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -24,6 +25,10 @@ public static class DefenseTestFactory
 
     public static ConnectionGovernor CreateGovernor(DdosOptions? options = null) =>
         new(Options.Create(options ?? new DdosOptions()), NullLogger<ConnectionGovernor>.Instance);
+
+    /// <summary>Disabled by default, which is how it ships — a test that wanted it on would say so.</summary>
+    public static AnomalyDetector CreateAnomalyDetector(AnomalyOptions? options = null) =>
+        new(Options.Create(options ?? new AnomalyOptions()), NullLogger<AnomalyDetector>.Instance);
 
     public static BotDetector CreateBotDetector(BotDefenseOptions? options = null, ThreatIntelligence? threats = null) =>
         new(Options.Create(options ?? new BotDefenseOptions()), threats ?? CreateThreatIntelligence());

@@ -1,4 +1,5 @@
 using System.Net;
+using MinecraftFirewall.Proxy.Anomaly;
 using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.Inspection;
 using MinecraftFirewall.Proxy.Messages;
@@ -55,6 +56,16 @@ public sealed class PlayStateInspector(
     private bool _reportedLayoutProblem;
     private bool _reportedAttackRate;
 
+    // Session tallies, kept for the anomaly baseline. Deliberately counted here rather than in the
+    // analyser: this is the one place every serverbound packet passes through exactly once.
+    private readonly HashSet<int> _packetKinds = [];
+    private DateTimeOffset _startedAt;
+    private DateTimeOffset? _firstPacketAt;
+    private int _packetsSeen;
+    private long _bytesSeen;
+    private int _chatMessages;
+    private int _movementPackets;
+
     public PlayStateInspector(
         ServerProfile profile,
         string username,
@@ -78,13 +89,45 @@ public sealed class PlayStateInspector(
     /// whether to send a Play-state Disconnect before closing.</summary>
     public string? DisconnectReason { get; private set; }
 
+    /// <summary>True once anything at all was refused on this connection. The anomaly baseline learns
+    /// only from connections where this stayed false — a flood being actively refused must never
+    /// become the definition of normal.</summary>
+    public bool HadViolation { get; private set; }
+
+    /// <summary>The finished session as the anomaly model sees it. Only the shape of the conversation
+    /// goes in: declared values like the protocol version or the username are free for an attacker to
+    /// set to anything, so learning from them would teach the model whatever they chose.</summary>
+    public ConnectionFeatures BuildFeatures(DateTimeOffset endedAt) => new(
+        DurationSeconds: (endedAt - _startedAt).TotalSeconds,
+        PacketsFromClient: _packetsSeen,
+        BytesFromClient: _bytesSeen,
+        PeakPacketsPerSecond: _budget.PeakPacketsPerSecond,
+        DistinctPacketKinds: _packetKinds.Count,
+        SecondsToFirstPacket: ((_firstPacketAt ?? endedAt) - _startedAt).TotalSeconds,
+        ChatMessages: _chatMessages,
+        MovementPackets: _movementPackets);
+
     public async Task RunAsync(Stream clientStream, Stream backendStream, CancellationToken ct)
     {
+        _startedAt = _now();
+
         while (!ct.IsCancellationRequested)
         {
             DecodedPacket packet = await CompressedPacketReader
                 .ReadAsync(clientStream, inspection.MaxServerboundFrameBytes, ct, inspection.MaxServerboundUncompressedBytes)
                 .ConfigureAwait(false);
+
+            _packetsSeen++;
+            _bytesSeen += packet.RawFrame.Length;
+            _firstPacketAt ??= _now();
+
+            // Bounded: a client sending a thousand different packet IDs is itself the anomaly, and the
+            // set must not become a way to make this connection allocate.
+            if (_packetKinds.Count < 128)
+                _packetKinds.Add(packet.PacketId);
+
+            if (packetIds.IsMovement(packet.PacketId))
+                _movementPackets++;
 
             // Charged before anything is decided about the packet. A flood is defined by its volume,
             // not its contents, so the cheapest check has to be the first one.
@@ -93,6 +136,7 @@ public sealed class PlayStateInspector(
                 logger.LogWarning("[{Profile}] '{Username}' ({Ip}) exceeded its packet budget: {Detail}",
                     profile.Name, username, remoteAddress, overBudget);
                 policyEngine.RegisterPacketFlood(remoteAddress, profile.Name, username, overBudget);
+                HadViolation = true;
                 DisconnectReason = messages.GenericDenied;
                 return;
             }
@@ -103,6 +147,7 @@ public sealed class PlayStateInspector(
                     profile.Name, username, remoteAddress, violation.Detail);
                 policyEngine.RegisterProtocolViolation(remoteAddress, profile.Name, username, violation.Detail,
                     unambiguous: violation.Severity == PayloadSeverity.ProtocolViolation);
+                HadViolation = true;
                 DisconnectReason = messages.GenericDenied;
                 return;
             }
@@ -162,6 +207,7 @@ public sealed class PlayStateInspector(
                 policyEngine.RegisterProtocolViolation(remoteAddress, profile.Name, username,
                     $"{finding.Rule}: {finding.Detail}",
                     unambiguous: finding.Severity == PayloadSeverity.ProtocolViolation);
+                HadViolation = true;
                 DisconnectReason = messages.GenericDenied;
                 return;
             }
@@ -180,6 +226,7 @@ public sealed class PlayStateInspector(
             if (isCommand && HandleCayaDevCheckCommand(text))
                 continue; // /register or /login outside a grace-auth requirement — also swallowed
 
+            _chatMessages++;
             LogCommandOrChat(isCommand, text);
 
             if (isCommand && !_isTrusted && DangerousCommandMatcher.IsMatch(text, dangerousCommands))
@@ -187,6 +234,7 @@ public sealed class PlayStateInspector(
                 logger.LogWarning("[{Profile}] DANGEROUS COMMAND from non-trusted '{Username}' ({Ip}): {Command}",
                     profile.Name, username, remoteAddress, DangerousCommandMatcher.ExtractBaseCommand(text));
                 policyEngine.RegisterDangerousCommand(remoteAddress, profile.Name, username, DangerousCommandMatcher.ExtractBaseCommand(text));
+                HadViolation = true;
                 DisconnectReason = messages.DangerousCommandBlocked;
                 return;
             }
@@ -217,6 +265,7 @@ public sealed class PlayStateInspector(
         logger.LogWarning("[{Profile}] grace-authentication FAILED for '{Username}' from {Ip} — first message was not a correct /login.",
             profile.Name, username, remoteAddress);
         policyEngine.RegisterGraceAuthFailure(remoteAddress, profile.Name, username);
+        HadViolation = true;
         DisconnectReason = messages.GraceAuthenticationFailed;
     }
 

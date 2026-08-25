@@ -38,6 +38,7 @@ public class ProxyIntegrationTests : IAsyncLifetime
     private RsaServerKeyPair _serverKey = null!;
     private ConnectionGovernor _governor = null!;
     private BotDetector _botDetector = null!;
+    private MinecraftFirewall.Proxy.Anomaly.AnomalyDetector _anomaly = null!;
 
     public async Task InitializeAsync()
     {
@@ -81,10 +82,11 @@ public class ProxyIntegrationTests : IAsyncLifetime
         _governor = DefenseTestFactory.CreateGovernor();
         _botDetector = DefenseTestFactory.CreateBotDetector();
         var inspection = new InspectionOptions();
+        _anomaly = DefenseTestFactory.CreateAnomalyDetector();
         var listenerA = new ProxyListener(_profileA, _policyEngine, identityOptions, dangerousCommands, messages,
-            premiumHandshake, _governor, _botDetector, inspection, NullLogger.Instance);
+            premiumHandshake, _governor, _botDetector, inspection, _anomaly, NullLogger.Instance);
         var listenerB = new ProxyListener(_profileB, _policyEngine, identityOptions, dangerousCommands, messages,
-            premiumHandshake, _governor, _botDetector, inspection, NullLogger.Instance);
+            premiumHandshake, _governor, _botDetector, inspection, _anomaly, NullLogger.Instance);
         _ = listenerA.RunAsync(_listenersCts.Token);
         _ = listenerB.RunAsync(_listenersCts.Token);
 
@@ -96,6 +98,7 @@ public class ProxyIntegrationTests : IAsyncLifetime
         await _listenersCts.CancelAsync();
         _governor.Dispose();
         _botDetector.Dispose();
+        _anomaly.Dispose();
         _banService.Dispose();
         _serverKey.Dispose();
         await _backendA.DisposeAsync();
