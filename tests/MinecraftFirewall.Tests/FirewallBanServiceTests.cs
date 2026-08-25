@@ -15,6 +15,7 @@ public class FirewallBanServiceTests
             Options.Create(options ?? new FirewallBanOptions()),
             neverBanList,
             gateway,
+            new RecordingAlertSender(),
             NullLogger<FirewallBanService>.Instance);
     }
 

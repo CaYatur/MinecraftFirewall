@@ -325,8 +325,30 @@ were designed for in this document but never built, plus one honest verification
      round-trip — specifically that `FirewallWASRule.Description` reads back byte-identical from
      `INetFwPolicy2` — has not been exercised against the actual Windows Firewall. Worth one manual
      check from an elevated prompt before relying on ban expiry in production.
-3. **Discord alerts** (`Alerts/DiscordAlertSender.cs` in the structure below) — never built. Everything
-   currently goes to the log file and console only.
+3. ~~**Discord alerts**~~ — **done** (`Alerts/`). Off by default (empty webhook URL ⇒ a
+   `NullAlertSender` is registered, so there is no queue and no background pump at all). Four event
+   kinds, individually toggleable: bans, a registered player authenticating from a new IP, premium
+   verification failures, and dangerous commands.
+   - **Alerting can never affect a connection.** `Send` only enqueues — it never awaits HTTP, never
+     blocks and never throws, because every call site sits on a live connection's path. Same
+     fail-open stance as `IIpInfoClient`, the deliberate opposite of `IPremiumSessionClient`: this is
+     observability, not a security gate.
+   - **Bounded queue, paced pump.** A bot flood is exactly the situation that generates the most
+     alerts *and* the situation where the proxy most needs to stay up, so the queue is bounded
+     (dropping oldest) rather than growing without limit, and the pump paces itself to Discord's
+     webhook rate limit instead of having most of a burst rejected. Drops are counted and reported in
+     the next delivered message rather than silently swallowed — a quiet channel must never be
+     mistakable for a quiet server.
+   - **Attacker-controlled text is sanitized at the alert boundary** (`AlertText`). Alert bodies embed
+     values that came off the wire — usernames, handshake hostnames, command names — so mass mentions
+     are *defanged* rather than escaped (escaping is renderer-dependent; a zero-width break is not),
+     since a handshake hostname of `@everyone` would otherwise let anyone who can reach the public
+     port ping an entire Discord server at will. Control characters are stripped so an injected
+     newline can't fake an extra alert line, backticks are neutralised, and everything is
+     length-capped (an over-long post is rejected by Discord outright, i.e. a silently lost alert).
+   - **Only the base command is sent for dangerous-command alerts**, never its arguments, which are
+     free-form player input. The webhook URL is never logged, including on failure — a failing webhook
+     is precisely when someone is most likely to paste a log into a support thread.
 4. **The premium positive path has not been verified live.** The negative path is confirmed
    end-to-end (see Stage 4b above), but confirming that a *genuine* premium account is actually
    admitted needs a real Microsoft/Mojang account, which this build environment does not have. The

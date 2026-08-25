@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using MinecraftFirewall.Proxy.Alerts;
 using Microsoft.Extensions.Options;
 
 namespace MinecraftFirewall.Proxy.Enforcement;
@@ -28,15 +29,19 @@ public sealed class FirewallBanService : IDisposable
     private readonly ConcurrentDictionary<IPAddress, DateTimeOffset> _activeBans = new();
     private readonly Timer _cleanupTimer;
 
+    private readonly IAlertSender _alerts;
+
     public FirewallBanService(
         IOptions<FirewallBanOptions> options,
         NeverBanList neverBanList,
         IWindowsFirewallGateway gateway,
+        IAlertSender alerts,
         ILogger<FirewallBanService> logger)
     {
         _options = options.Value;
         _neverBanList = neverBanList;
         _gateway = gateway;
+        _alerts = alerts;
         _logger = logger;
         _cleanupTimer = new Timer(_ => CleanupExpired(), null, _options.CleanupInterval, _options.CleanupInterval);
 
@@ -143,6 +148,7 @@ public sealed class FirewallBanService : IDisposable
         }
 
         _logger.LogWarning("Banned {Ip} until {ExpiresAt}. Reason: {Reason}", address, expiresAt, reason);
+        _alerts.Send(AlertKind.Ban, $"🚫 **Banned `{AlertText.Field(address.ToString())}`** until `{expiresAt:u}`\n{AlertText.Field(reason)}");
         return BanResult.Banned;
     }
 

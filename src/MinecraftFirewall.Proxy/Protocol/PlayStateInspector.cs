@@ -131,7 +131,7 @@ public sealed class PlayStateInspector(
         if (parsed is { Kind: CayaDevCheckCommandKind.Login } && PasswordHasher.Verify(parsed.Password, graceAuth!.PasswordHash))
         {
             graceAuth.Entry.LearnIp(remoteAddress, identityOptions.LearnedIpTtl, identityOptions.MaxLearnedIpsPerUsername);
-            policyEngine.RegisterGraceAuthSuccess(remoteAddress);
+            policyEngine.RegisterGraceAuthSuccess(remoteAddress, profile.Name, username);
             _isTrusted = true;
             logger.LogInformation("[{Profile}] '{Username}' authenticated from a new IP {Ip} — trusted for {Ttl}.",
                 profile.Name, username, remoteAddress, identityOptions.LearnedIpTtl);

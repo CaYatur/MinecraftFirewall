@@ -1,5 +1,6 @@
 using MinecraftFirewall.Proxy;
 using MinecraftFirewall.Proxy.Admin;
+using MinecraftFirewall.Proxy.Alerts;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.Identity.Persistence;
@@ -8,6 +9,7 @@ using MinecraftFirewall.Proxy.IpIntel;
 using MinecraftFirewall.Proxy.Messages;
 using MinecraftFirewall.Proxy.Policy;
 using MinecraftFirewall.Proxy.RateLimiting;
+using Microsoft.Extensions.Options;
 using Serilog;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -30,7 +32,19 @@ builder.Services.Configure<IpInfoOptions>(builder.Configuration.GetSection(IpInf
 builder.Services.Configure<PremiumOptions>(builder.Configuration.GetSection(PremiumOptions.SectionName));
 builder.Services.Configure<IdentityPersistenceOptions>(builder.Configuration.GetSection(IdentityPersistenceOptions.SectionName));
 
+builder.Services.Configure<AlertOptions>(builder.Configuration.GetSection(AlertOptions.SectionName));
+
 builder.Services.AddHttpClient();
+
+// A no-op sender when no webhook is configured, so nothing spins up a queue or a background pump for
+// a feature that isn't in use — and call sites never need a null check either way.
+builder.Services.AddSingleton<IAlertSender>(sp =>
+{
+    var alertOptions = sp.GetRequiredService<IOptions<AlertOptions>>();
+    return string.IsNullOrWhiteSpace(alertOptions.Value.DiscordWebhookUrl)
+        ? new NullAlertSender()
+        : new DiscordAlertSender(alertOptions, sp.GetRequiredService<IHttpClientFactory>(), sp.GetRequiredService<ILogger<DiscordAlertSender>>());
+});
 
 builder.Services.AddSingleton<VpnIntelligence>();
 builder.Services.AddSingleton<IIpInfoClient, IpInfoClient>();

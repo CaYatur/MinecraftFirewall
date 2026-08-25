@@ -19,6 +19,7 @@ public class FirewallBanPersistenceTests
         new(Options.Create(options ?? new FirewallBanOptions()),
             new NeverBanList(Options.Create(neverBanOptions ?? new NeverBanOptions())),
             gateway,
+            new RecordingAlertSender(),
             NullLogger<FirewallBanService>.Instance);
 
     [Fact]

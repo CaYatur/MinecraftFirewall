@@ -24,7 +24,7 @@ public class AdminCommandHandlerTests
         var gateway = new FakeWindowsFirewallGateway();
         var neverBanList = new NeverBanList(Options.Create(new NeverBanOptions()));
         var banOptions = Options.Create(new FirewallBanOptions());
-        var banService = new FirewallBanService(banOptions, neverBanList, gateway, NullLogger<FirewallBanService>.Instance);
+        var banService = new FirewallBanService(banOptions, neverBanList, gateway, new RecordingAlertSender(), NullLogger<FirewallBanService>.Instance);
 
         var vpnIntelOptions = Options.Create(new VpnIntelOptions
         {

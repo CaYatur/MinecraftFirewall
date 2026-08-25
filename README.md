@@ -4,10 +4,10 @@ Windows reverse-proxy firewall for Minecraft Java Edition servers running `onlin
 protection plugins. It sits in front of the real server (which binds to `127.0.0.1` only) and decides,
 per connection, whether to forward it — without any plugin/mod inside Minecraft itself.
 
-## Status: all 4 stages complete (231 automated tests passing)
+## Status: feature-complete (270 automated tests passing)
 
-This is an in-progress build. See [`docs/plan.md`](docs/plan.md) for the complete staged design doc and
-current status. What's implemented right now:
+Everything originally planned is built. See [`docs/plan.md`](docs/plan.md) for the full design doc,
+including how each piece was verified and what honestly wasn't. What it does:
 
 - **Multi-server reverse proxy** — one process fronts multiple Minecraft servers on the same machine,
   each with its own public port, config-driven (`ServerProfiles` in `appsettings.json`).
@@ -44,7 +44,6 @@ current status. What's implemented right now:
   `reload`, `list-profiles`, talking to the running service over a named pipe that only Administrators
   can connect to (must be run elevated). Every mutating command is in-memory only and says so in its own
   output — it does not survive a service restart unless you also add it to `appsettings.json`.
-
 - **Premium account lock (the original strongest request)** — mark a username `"RequirePremium": true`
   and it is permanently bound to its genuine Microsoft/Mojang account, even though the backend stays
   `online-mode=false`. Such a connection gets a real encryption handshake (RSA + AES-CFB8) and a real
@@ -53,16 +52,17 @@ current status. What's implemented right now:
   any IP** — their own launcher answers the cryptographic challenge silently. Nobody else can use the
   name, and there is no fallback to any weaker check: if verification fails, or the feature is switched
   off in config, the name is denied outright rather than dropping back to password/IP.
-
 - **Persistent identity store** — self-registered passwords, learned IPs, and premium UUID pins
   survive a service restart (`C:\ProgramData\MinecraftFirewall\identity-store.json`, written with
   inheritance disabled and access limited to Administrators, SYSTEM, and the service's own account,
   since it holds password hashes). Admin-declared settings (`AllowedIps`, `RequirePremium`) are
   deliberately *not* stored there — `appsettings.json` stays their single source of truth, so removing
   a name from config really does remove it.
-
-**Not implemented (designed for, never built):** Discord webhook alerts — everything currently goes to
-the log file and console.
+- **Discord alerts** — optional webhook notifications for bans, a registered player authenticating
+  from a new IP, premium verification failures, and dangerous commands. Off by default; each event
+  type can be toggled. Alerting never blocks or fails a player's connection — if Discord is down the
+  alert is dropped and proxying carries on — and text that came off the wire is sanitized before
+  posting, so a player can't pick a name that pings your whole server.
 
 **Verified end-to-end, not just with synthetic unit tests:** the compiled service was run against a
 real local Paper server, driven through the proxy's public port by a real protocol-correct client. This
@@ -147,6 +147,9 @@ docs/protocol/                     Sourced packet-ID reference data (Mojang's ow
    - Optional: for the real-time ipinfo.io secondary signal, sign up free at
      [ipinfo.io/signup](https://ipinfo.io/signup) and paste the token into the top-level `IpInfo`
      section. Leave it empty to keep this signal off (default) — the X4BNet lists above still apply.
+   - Optional: for Discord notifications, create a webhook in your channel's settings (Edit Channel →
+     Integrations → Webhooks) and paste its URL into the top-level `Alerts` section. Leave it empty to
+     keep alerting off (default). Treat the URL as a secret — anyone holding it can post to that channel.
    - Optional: to lock a username to its genuine Minecraft account owner, add it to that profile's
      `ProtectedUsernames` with `"RequirePremium": true` (no `AllowedIps` needed). This needs no API
      key — Mojang's session endpoint is public — and is on by default; the top-level `Premium` section

@@ -1,4 +1,5 @@
 using MinecraftFirewall.Proxy;
+using MinecraftFirewall.Proxy.Alerts;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity.Persistence;
 using MinecraftFirewall.Proxy.Identity.Premium;
@@ -78,6 +79,20 @@ public class AppSettingsJsonBindingTests
         Assert.NotNull(config.GetSection(IpInfoOptions.SectionName).Get<IpInfoOptions>());
         Assert.NotNull(config.GetSection(PremiumOptions.SectionName).Get<PremiumOptions>());
         Assert.NotNull(config.GetSection(IdentityPersistenceOptions.SectionName).Get<IdentityPersistenceOptions>());
+        Assert.NotNull(config.GetSection(AlertOptions.SectionName).Get<AlertOptions>());
+    }
+
+    [Fact]
+    public void AppSettingsJson_Alerts_ShipWithNoWebhookSoNothingIsSentByDefault()
+    {
+        // A webhook URL is a secret and a destination the operator must choose deliberately — this
+        // must never ship pointing anywhere.
+        var config = LoadConfiguration();
+        var alerts = config.GetSection(AlertOptions.SectionName).Get<AlertOptions>();
+
+        Assert.NotNull(alerts);
+        Assert.True(string.IsNullOrWhiteSpace(alerts!.DiscordWebhookUrl));
+        Assert.True(alerts.MaxQueuedAlerts > 0); // a zero bound would silently discard every alert
     }
 
     [Fact]

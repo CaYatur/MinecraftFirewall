@@ -13,7 +13,7 @@ namespace MinecraftFirewall.Tests;
 
 public class PolicyEngineTests
 {
-    private sealed record Fixture(PolicyEngine Engine, VpnIntelligence VpnIntel, FakeWindowsFirewallGateway Gateway, FirewallBanService BanService, FakeIpInfoClient IpInfo);
+    private sealed record Fixture(PolicyEngine Engine, VpnIntelligence VpnIntel, FakeWindowsFirewallGateway Gateway, FirewallBanService BanService, FakeIpInfoClient IpInfo, RecordingAlertSender Alerts);
 
     private static Fixture CreateFixture(int strikesBeforeBan = 5, int loginMaxPerWindow = 100, IpInfoOptions? ipInfoOptions = null)
     {
@@ -28,13 +28,14 @@ public class PolicyEngineTests
         var gateway = new FakeWindowsFirewallGateway();
         var neverBanList = new NeverBanList(Options.Create(new NeverBanOptions()));
         var banOptions = Options.Create(new FirewallBanOptions { StrikesBeforeBan = strikesBeforeBan });
-        var banService = new FirewallBanService(banOptions, neverBanList, gateway, NullLogger<FirewallBanService>.Instance);
+        var alerts = new RecordingAlertSender();
+        var banService = new FirewallBanService(banOptions, neverBanList, gateway, alerts, NullLogger<FirewallBanService>.Instance);
         var strikeTracker = new StrikeTracker();
         var ipInfo = new FakeIpInfoClient();
 
-        var engine = new PolicyEngine(vpnIntel, rateLimiter, banService, strikeTracker, ipInfo, banOptions,
+        var engine = new PolicyEngine(vpnIntel, rateLimiter, banService, strikeTracker, ipInfo, alerts, banOptions,
             Options.Create(ipInfoOptions ?? new IpInfoOptions()), NullLogger<PolicyEngine>.Instance);
-        return new Fixture(engine, vpnIntel, gateway, banService, ipInfo);
+        return new Fixture(engine, vpnIntel, gateway, banService, ipInfo, alerts);
     }
 
     private static ServerProfile CreateProfile(string name = "profileA", VpnPolicy vpnPolicy = VpnPolicy.BlockForProtectedUsernamesOnly, bool useDatacenterList = false)

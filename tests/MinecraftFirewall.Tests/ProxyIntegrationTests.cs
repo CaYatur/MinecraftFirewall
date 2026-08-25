@@ -59,10 +59,10 @@ public class ProxyIntegrationTests : IAsyncLifetime
         var gateway = new FakeWindowsFirewallGateway();
         var neverBanList = new NeverBanList(Options.Create(new NeverBanOptions()));
         var banOptions = Options.Create(new FirewallBanOptions { StrikesBeforeBan = 100 }); // effectively disabled for this test
-        _banService = new FirewallBanService(banOptions, neverBanList, gateway, NullLogger<FirewallBanService>.Instance);
+        _banService = new FirewallBanService(banOptions, neverBanList, gateway, new RecordingAlertSender(), NullLogger<FirewallBanService>.Instance);
         var strikeTracker = new StrikeTracker();
 
-        _policyEngine = new PolicyEngine(vpnIntel, rateLimiter, _banService, strikeTracker, new FakeIpInfoClient(),
+        _policyEngine = new PolicyEngine(vpnIntel, rateLimiter, _banService, strikeTracker, new FakeIpInfoClient(), new RecordingAlertSender(),
             banOptions, Options.Create(new IpInfoOptions()), NullLogger<PolicyEngine>.Instance);
 
         var identityOptions = new IdentityOptions();

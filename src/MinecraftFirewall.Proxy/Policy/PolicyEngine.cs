@@ -1,4 +1,5 @@
 using System.Net;
+using MinecraftFirewall.Proxy.Alerts;
 using MinecraftFirewall.Proxy.Enforcement;
 using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.IpIntel;
@@ -35,6 +36,7 @@ public sealed class PolicyEngine(
     FirewallBanService banService,
     StrikeTracker strikeTracker,
     IIpInfoClient ipInfoClient,
+    IAlertSender alerts,
     IOptions<FirewallBanOptions> banOptions,
     IOptions<IpInfoOptions> ipInfoOptions,
     ILogger<PolicyEngine> logger)
@@ -160,8 +162,16 @@ public sealed class PolicyEngine(
         return new PolicyDecision(true, "OK");
     }
 
-    /// <summary>Called by PlayStateInspector when a grace-authentication first-message check succeeds.</summary>
-    public void RegisterGraceAuthSuccess(IPAddress remoteAddress) => strikeTracker.Reset(remoteAddress);
+    /// <summary>Called by PlayStateInspector when a grace-authentication first-message check succeeds.
+    /// This is deliberately alerted on even though it's a *success*: it's the moment a password was
+    /// used from an IP nobody had seen before, so if the password has been stolen this is where it
+    /// becomes visible rather than silently working.</summary>
+    public void RegisterGraceAuthSuccess(IPAddress remoteAddress, string profileName, string username)
+    {
+        strikeTracker.Reset(remoteAddress);
+        alerts.Send(AlertKind.NewTrustedIp,
+            $"🔑 **New trusted IP** for `{AlertText.Field(username)}` on `{AlertText.Field(profileName)}`: `{AlertText.Field(remoteAddress.ToString())}`\nIf this wasn't them, their password may be compromised.");
+    }
 
     /// <summary>Called by PlayStateInspector when a grace-authentication check fails (wrong password,
     /// wrong first message, or timeout) — a much stronger signal than a generic rate-limit trip, so it
@@ -198,6 +208,12 @@ public sealed class PolicyEngine(
         RegisterStrikeAndMaybeBan(remoteAddress,
             $"[{profileName}] premium verification failed for '{username}': {reason}",
             weight: pinnedToDifferentAccount ? _banOptions.StrikesBeforeBan : 1);
+
+        string headline = pinnedToDifferentAccount
+            ? "🛑 **Impersonation attempt**: a different verified Minecraft account tried to take a pinned username"
+            : "⚠️ **Premium verification failed** (a cracked client — or a Mojang outage hitting the real owner)";
+        alerts.Send(AlertKind.PremiumVerificationFailure,
+            $"{headline}\n`{AlertText.Field(username)}` on `{AlertText.Field(profileName)}` from `{AlertText.Field(remoteAddress.ToString())}` — {AlertText.Field(reason)}");
     }
 
     /// <summary>Called by PlayStateInspector when a non-trusted connection issues a dangerous command —
@@ -207,6 +223,11 @@ public sealed class PolicyEngine(
         RegisterStrikeAndMaybeBan(remoteAddress,
             $"[{profileName}] dangerous command '{command}' from non-trusted username '{username}'",
             weight: _banOptions.StrikesBeforeBan);
+
+        // Only the base command is sent, never its arguments — the caller already extracts it, and
+        // arguments are free-form player input that could carry anything.
+        alerts.Send(AlertKind.DangerousCommand,
+            $"☢️ **Dangerous command blocked** on `{AlertText.Field(profileName)}`\n`{AlertText.Field(username)}` from `{AlertText.Field(remoteAddress.ToString())}` tried `/{AlertText.Field(command)}`");
     }
 
     private void RegisterStrikeAndMaybeBan(IPAddress address, string reason, int weight = 1)
