@@ -309,17 +309,27 @@ public static class ClientConnection
 
             if (hasPacketIds)
             {
+                // Shared with the pump carrying the backend's replies. Holding a player at the login
+                // prompt needs both halves of the connection: only the pump ever learns where the
+                // backend has put them, and only the inspector knows when they have authenticated.
+                var authHold = new AuthHold();
+
                 var inspector = new PlayStateInspector(
                     profile, username, remoteAddress, packetIds, decision.GraceAuth,
                     startsTrusted: decision.GraceAuth is null,
-                    identityOptions, dangerousCommands, messages, policyEngine, inspection, logger)
+                    identityOptions, dangerousCommands, messages, policyEngine, inspection, logger, authHold)
                 {
                     // Only when the player asked for it and the challenge actually pinned the name.
                     // Announcing it for an ordinary auto-claim would be confusing: nobody asked.
                     AnnouncePremiumLockSucceeded = claimRequestedByPlayer && profile.IdentityStore.Find(username)?.PremiumRequired == true,
                 };
 
-                await PumpWithInspectionAsync(client, clientIo, backendStream, inspector, packetIds, hostShutdown).ConfigureAwait(false);
+                await PumpWithInspectionAsync(client, clientIo, backendStream, inspector, packetIds,
+                    // The backend's side is only decoded while somebody is actually being held. An
+                    // authenticated player's connection should not pay for a login feature, so once
+                    // the hold is released the pump goes back to being a plain byte copy.
+                    decision.GraceAuth is not null ? authHold : null,
+                    inspection, hostShutdown).ConfigureAwait(false);
 
                 // After the session, not during it. What the model learns from is the shape of a whole
                 // conversation — how long it lasted, how it was paced, what mix of packets it carried —
@@ -578,11 +588,14 @@ public static class ClientConnection
     }
 
     private static async Task PumpWithInspectionAsync(TcpClient client, Stream clientStream, Stream backendStream,
-        PlayStateInspector inspector, PlayStatePacketIds packetIds, CancellationToken hostShutdown)
+        PlayStateInspector inspector, PlayStatePacketIds packetIds, AuthHold? authHold,
+        InspectionOptions inspection, CancellationToken hostShutdown)
     {
         using var pumpCts = CancellationTokenSource.CreateLinkedTokenSource(hostShutdown);
 
-        Task backendToClient = PumpAsync(backendStream, clientStream, pumpCts);
+        Task backendToClient = authHold is null
+            ? PumpAsync(backendStream, clientStream, pumpCts)
+            : WatchThenPumpAsync(backendStream, clientStream, inspector, packetIds, authHold, inspection, pumpCts);
         Task clientToBackend = RunInspectorAsync(inspector, clientStream, backendStream, pumpCts);
 
         await Task.WhenAny(clientToBackend, backendToClient).ConfigureAwait(false);
@@ -609,6 +622,39 @@ public static class ClientConnection
         try
         {
             await inspector.RunAsync(clientStream, backendStream, pumpCts.Token).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Any failure here just means this half of the relay is done; the caller tears down both.
+        }
+        finally
+        {
+            pumpCts.Cancel();
+        }
+    }
+
+    /// <summary>
+    /// Carries the backend's replies while reading the two things a held player's rescue depends on:
+    /// where the backend has placed them, and whether something has started hurting them.
+    ///
+    /// Reverts to a plain byte copy the moment the hold is released, so this costs nothing for the
+    /// rest of the session. Every frame is forwarded before it is examined and regardless of whether
+    /// examining it worked -- this side of the connection is observed, never filtered, and a packet
+    /// the proxy could not read is still a packet the client is entitled to receive.
+    /// </summary>
+    private static async Task WatchThenPumpAsync(Stream backendStream, Stream clientStream,
+        PlayStateInspector inspector, PlayStatePacketIds packetIds, AuthHold authHold,
+        InspectionOptions inspection, CancellationTokenSource pumpCts)
+    {
+        try
+        {
+            var watcher = new ClientboundAuthWatcher(
+                packetIds, authHold,
+                onPosition: _ => { },
+                onHealth: inspector.NoteBackendHealth,
+                maxFrameBytes: inspection.MaxClientboundFrameBytes);
+
+            await watcher.RunAsync(backendStream, clientStream, pumpCts.Token).ConfigureAwait(false);
         }
         catch
         {

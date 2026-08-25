@@ -40,4 +40,52 @@ public sealed class IdentityOptions
     /// <summary>How often the prompt is repeated while a player is waiting to authenticate. Minecraft
     /// chat scrolls, and a single message sent at join time is gone by the time somebody looks.</summary>
     public TimeSpan AuthenticationReminderInterval { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// Whether a player waiting to authenticate has their client pinned in place.
+    ///
+    /// Their packets are refused either way, so the server never sees them move. What this adds is
+    /// telling the *client* so. Minecraft predicts movement locally and only corrects it when the
+    /// server disagrees, so without this the held player watches themselves walk around and then snap
+    /// back — which reads as a broken server, not as a login prompt. This was reported from live play,
+    /// not caught by a test.
+    /// </summary>
+    public bool LockPositionWhileAuthenticating { get; set; } = true;
+
+    /// <summary>
+    /// Where a held player's client is told it is. The origin by default, and deliberately not their
+    /// real position: coordinates are on screen for anyone watching a stream or looking over a
+    /// shoulder, and somebody who has not yet proved who they are should not be leaking a base
+    /// location to whoever is currently wearing their name.
+    /// </summary>
+    public double LockPositionX { get; set; }
+
+    public double LockPositionY { get; set; }
+
+    public double LockPositionZ { get; set; }
+
+    /// <summary>
+    /// How often the pin is re-applied while the player waits.
+    ///
+    /// It has to repeat, because gravity is a client-side prediction too: pinned once, the player
+    /// simply starts falling from the origin. Frequently enough that they never visibly drift, rarely
+    /// enough to stay a rounding error next to the twenty movement packets a second the client is
+    /// already sending.
+    /// </summary>
+    public TimeSpan PositionLockInterval { get; set; } = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// Whether a held player who starts taking damage is disconnected rather than left to die.
+    ///
+    /// A firewall in front of a server cannot stop a creeper. The player is genuinely standing in the
+    /// world while they read the prompt, and the only thing that decides their health is the server
+    /// itself — nothing this proxy refuses or rewrites changes that. What it can do is notice, and end
+    /// the connection before the death happens: a kick costs them a reconnect, a death costs them
+    /// their inventory.
+    /// </summary>
+    public bool DisconnectIfDamagedWhileAuthenticating { get; set; } = true;
+
+    /// <summary>Health at or below which a held player is pulled out, out of the usual twenty. Set
+    /// high on purpose: the point is to act on the first hit, not to referee a fair fight.</summary>
+    public float DamageDisconnectHealthThreshold { get; set; } = 19.5f;
 }

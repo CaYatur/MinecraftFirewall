@@ -96,6 +96,15 @@ for entry in sorted(releases, key=lambda v: v["id"]):
             "title_text": pid("play", "clientbound", "set_title_text"),
             "subtitle_text": pid("play", "clientbound", "set_subtitle_text"),
             "title_animation": pid("play", "clientbound", "set_titles_animation"),
+            "player_position": pid("play", "clientbound", "player_position"),
+            "set_health": pid("play", "clientbound", "set_health"),
+            "accept_teleportation": pid("play", "serverbound", "accept_teleportation"),
+            # Mojang's reports carry packet IDs but not field layouts, so this one entry is a rule
+            # rather than an observation: Synchronize Player Position was reordered in 1.21.2, moving
+            # the teleport ID to the front and widening the relative-movement flags. The rule is not
+            # trusted on its own -- extend-protocol-tables.py reads the real layout for every one of
+            # these versions out of minecraft-data and refuses to run if the two ever disagree.
+            "position_layout": "TeleportIdFirst" if protocol >= 768 else "TeleportIdLast",
             "move_pos": pid("play", "serverbound", "move_player_pos"),
             "move_pos_rot": pid("play", "serverbound", "move_player_pos_rot"),
             "move_rot": pid("play", "serverbound", "move_player_rot"),

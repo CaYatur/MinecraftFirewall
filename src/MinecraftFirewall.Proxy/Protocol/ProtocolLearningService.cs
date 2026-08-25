@@ -311,9 +311,31 @@ public sealed class ProtocolLearningService(
                 return null;
             }
 
+            // Everything needed to hold a player at the login prompt: the title to show them, the
+            // position packet that pins their client in place, and the confirmation they send back.
+            // A version missing any of these is dropped rather than half-learned — a table with a
+            // zero in it would not fail, it would send the wrong packet.
+            if (Pick(clientbound, "set_title_text", "title") is not { } titleText ||
+                Pick(clientbound, "set_title_subtitle", "set_subtitle_text") is not { } subtitleText ||
+                Pick(clientbound, "set_title_time", "set_titles_animation") is not { } titleAnimation ||
+                Pick(clientbound, "position") is not { } playerPosition ||
+                Pick(clientbound, "update_health") is not { } setHealth ||
+                Pick(serverbound, "teleport_confirm") is not { } acceptTeleportation ||
+                ReadPositionLayout(protocol.RootElement) is not { } layout)
+            {
+                return null;
+            }
+
             table.Disconnect = disconnect;
             table.SystemChat = systemChat;
             table.ConfigFinish = finish;
+            table.TitleText = titleText;
+            table.SubtitleText = subtitleText;
+            table.TitleAnimation = titleAnimation;
+            table.PlayerPosition = playerPosition;
+            table.SetHealth = setHealth;
+            table.AcceptTeleportation = acceptTeleportation;
+            table.PositionLayout = layout;
             table.Actions = [.. ActionNames.Select(n => serverbound.TryGetValue(n, out int id) ? id : -1).Where(id => id >= 0).Distinct().Order()];
 
             return table;
@@ -323,6 +345,51 @@ public sealed class ProtocolLearningService(
             logger.LogDebug(ex, "Could not build a packet table from {Path}.", versionPath);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Reads the field order of the clientbound Synchronize Player Position packet.
+    ///
+    /// Observed, never assumed. The proxy writes this packet itself to pin an unauthenticated
+    /// player's client at the origin, so a wrong field order is not a missed detection — it is a
+    /// mangled join for everyone on that version. Minecraft reordered it once already, in 1.21.2.
+    ///
+    /// A shape that is neither of the two known ones returns null, which drops the whole version.
+    /// That is the same refusal the packet IDs get, and for the same reason: this project does not
+    /// guess a layout it has not seen.
+    /// </summary>
+    private static PositionLayout? ReadPositionLayout(JsonElement root)
+    {
+        if (!root.TryGetProperty("play", out JsonElement play) ||
+            !play.TryGetProperty("toClient", out JsonElement toClient) ||
+            !toClient.TryGetProperty("types", out JsonElement types) ||
+            !types.TryGetProperty("packet_position", out JsonElement packet) ||
+            packet.ValueKind != JsonValueKind.Array || packet.GetArrayLength() != 2)
+        {
+            return null;
+        }
+
+        JsonElement fields = packet[1];
+        if (fields.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var names = new List<string>();
+        foreach (JsonElement field in fields.EnumerateArray())
+        {
+            if (field.TryGetProperty("name", out JsonElement name) && name.GetString() is { } text)
+                names.Add(text);
+        }
+
+        if (names.Count == 0)
+            return null;
+
+        if (names[0] == "teleportId")
+            return PositionLayout.TeleportIdFirst;
+
+        if (names.Count >= 4 && names[0] == "x" && names[1] == "y" && names[2] == "z" && names[^1] == "teleportId")
+            return PositionLayout.TeleportIdLast;
+
+        return null;
     }
 
     /// <summary>Digs the packet-name to id map out of minecraft-data's discriminated union for one

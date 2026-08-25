@@ -22,6 +22,10 @@ public sealed class LearnedProtocolTable
     public int TitleText { get; set; }
     public int SubtitleText { get; set; }
     public int TitleAnimation { get; set; }
+    public int PlayerPosition { get; set; }
+    public int SetHealth { get; set; }
+    public int AcceptTeleportation { get; set; }
+    public PositionLayout PositionLayout { get; set; }
     public int MovePos { get; set; }
     public int MovePosRot { get; set; }
     public int MoveRot { get; set; }
@@ -52,6 +56,10 @@ public sealed class LearnedProtocolTable
         PlayTitleTextClientbound: TitleText,
         PlaySubtitleTextClientbound: SubtitleText,
         PlayTitleAnimationClientbound: TitleAnimation,
+        PlayPlayerPositionClientbound: PlayerPosition,
+        PlaySetHealthClientbound: SetHealth,
+        PlayAcceptTeleportationServerbound: AcceptTeleportation,
+        PositionLayout: PositionLayout,
         PlayActionServerbound: Actions);
 
     /// <summary>Turns a compiled-in table back into this shape, so the learner can compare what a
@@ -68,6 +76,10 @@ public sealed class LearnedProtocolTable
         TitleText = ids.PlayTitleTextClientbound,
         SubtitleText = ids.PlaySubtitleTextClientbound,
         TitleAnimation = ids.PlayTitleAnimationClientbound,
+        PlayerPosition = ids.PlayPlayerPositionClientbound,
+        SetHealth = ids.PlaySetHealthClientbound,
+        AcceptTeleportation = ids.PlayAcceptTeleportationServerbound,
+        PositionLayout = ids.PositionLayout,
         MovePos = ids.PlayMovePlayerPosServerbound,
         MovePosRot = ids.PlayMovePlayerPosRotServerbound,
         MoveRot = ids.PlayMovePlayerRotServerbound,
@@ -90,7 +102,10 @@ public sealed class LearnedProtocolTable
         SystemChat == other.SystemChat &&
         MovePos == other.MovePos &&
         MovePosRot == other.MovePosRot &&
-        Swing == other.Swing;
+        Swing == other.Swing &&
+        PlayerPosition == other.PlayerPosition &&
+        AcceptTeleportation == other.AcceptTeleportation &&
+        PositionLayout == other.PositionLayout;
 }
 
 /// <summary>

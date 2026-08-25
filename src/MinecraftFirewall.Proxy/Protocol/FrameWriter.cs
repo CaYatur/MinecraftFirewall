@@ -62,4 +62,66 @@ public static class FrameWriter
             .. WriteCompressedFrameUncompressedPayload(titlePacketId, NbtTextComponent.BuildLiteral(title)),
         ];
     }
+
+    /// <summary>
+    /// A clientbound Synchronize Player Position: moves where the *client* believes it is, without
+    /// the server being told anything.
+    ///
+    /// This is how a player waiting at the login prompt is pinned in place. Swallowing their movement
+    /// packets alone does not work — the client predicts its own movement locally and only corrects
+    /// when the server contradicts it, so a held player watches themselves walk around and then snap
+    /// back, which reads as a broken server rather than as a prompt. Contradicting them here is the
+    /// correction, and sending the origin rather than their real position also keeps their coordinates
+    /// off a screen anyone could be watching before they have proved who they are.
+    ///
+    /// Two layouts, because Minecraft reordered this packet in 1.21.2. Which one applies comes from
+    /// the generated tables (see <see cref="PositionLayout"/>) and is never guessed: writing the wrong
+    /// field order would not fail safely, it would mangle the join for every player on that version.
+    ///
+    /// Flags are all-zero in both shapes, meaning every value is absolute rather than relative — and
+    /// in the newer shape the three delta fields are zero too, which lands the player stationary
+    /// instead of carrying their momentum into the hold.
+    /// </summary>
+    public static byte[] WritePlayerPositionFrame(int packetId, PositionLayout layout,
+        double x, double y, double z, float yaw, float pitch, int teleportId)
+    {
+        var fields = new List<byte>(48);
+
+        void Double(double value)
+        {
+            Span<byte> buffer = stackalloc byte[8];
+            System.Buffers.Binary.BinaryPrimitives.WriteDoubleBigEndian(buffer, value);
+            fields.AddRange(buffer);
+        }
+
+        void Single(float value)
+        {
+            Span<byte> buffer = stackalloc byte[4];
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleBigEndian(buffer, value);
+            fields.AddRange(buffer);
+        }
+
+        if (layout == PositionLayout.TeleportIdFirst)
+        {
+            // 1.21.2 and later: teleport id, position, delta movement, rotation, 32-bit relative flags.
+            fields.AddRange(VarInt.Encode(teleportId));
+            Double(x); Double(y); Double(z);
+            Double(0); Double(0); Double(0);
+            Single(yaw); Single(pitch);
+
+            Span<byte> relatives = stackalloc byte[4];
+            System.Buffers.Binary.BinaryPrimitives.WriteInt32BigEndian(relatives, 0);
+            fields.AddRange(relatives);
+        }
+        else
+        {
+            // 1.20.2 to 1.21.1: position, rotation, one flags byte, then the teleport id.
+            Double(x); Double(y); Double(z);
+            Single(yaw); Single(pitch);
+            fields.Add(0x00);
+            fields.AddRange(VarInt.Encode(teleportId));
+        }
+
+        return WriteCompressedFrameUncompressedPayload(packetId, [.. fields]);
+    }
 }

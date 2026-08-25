@@ -41,6 +41,17 @@ public sealed class InspectionOptions
     /// CompressedPacketReader for why the compressed and uncompressed sizes need separate limits.</summary>
     public int MaxServerboundUncompressedBytes { get; set; } = 512 * 1024;
 
+    /// <summary>
+    /// Largest clientbound frame the proxy will read while it is watching the backend's side.
+    ///
+    /// Far more generous than the serverbound ceiling, and deliberately so: the two directions carry
+    /// completely different traffic. A chunk, a map or a full inventory really can be enormous, and
+    /// this side of the connection is being observed rather than policed — the proxy is looking for
+    /// two small packets among the backend's replies, not deciding what the backend is allowed to
+    /// say. A limit set too low here would not block an attack, it would break joining the server.
+    /// </summary>
+    public int MaxClientboundFrameBytes { get; set; } = 8 * 1024 * 1024;
+
     /// <summary>Serverbound packets per second from one connection before it is cut off. A vanilla
     /// client sends about 20 movement packets a second plus occasional others; 200 is roughly ten
     /// times what playing normally produces.</summary>

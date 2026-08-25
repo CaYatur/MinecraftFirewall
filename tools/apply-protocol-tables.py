@@ -31,6 +31,10 @@ for protocol in sorted(tables, key=int):
             PlayTitleTextClientbound: 0x{t['title_text']:02X},
             PlaySubtitleTextClientbound: 0x{t['subtitle_text']:02X},
             PlayTitleAnimationClientbound: 0x{t['title_animation']:02X},
+            PlayPlayerPositionClientbound: 0x{t['player_position']:02X},
+            PlaySetHealthClientbound: 0x{t['set_health']:02X},
+            PlayAcceptTeleportationServerbound: 0x{t['accept_teleportation']:02X},
+            PositionLayout: PositionLayout.{t['position_layout']},
             PlayActionServerbound: [{actions}]),''')
 
 p = Path('src/MinecraftFirewall.Proxy/Protocol/ProtocolVersionRegistry.cs')

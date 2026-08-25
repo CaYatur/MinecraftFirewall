@@ -73,7 +73,7 @@ public class DeepInspectionPipelineTests
         tweak?.Invoke(options);
 
         var inspector = new PlayStateInspector(profile, "Steve", RemoteIp, Ids, graceAuth: null, startsTrusted: true,
-            new IdentityOptions(), [], new MessagesOptions(), policy, options, NullLogger.Instance, clock);
+            new IdentityOptions(), [], new MessagesOptions(), policy, options, NullLogger.Instance, authHold: null, clock);
 
         return new Harness(inspector, gateway, alerts);
     }

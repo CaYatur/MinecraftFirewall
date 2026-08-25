@@ -71,6 +71,30 @@ def pick(ids, candidates):
     return None
 
 
+def position_layout(protocol):
+    """Which shape the clientbound Synchronize Player Position packet has.
+
+    Minecraft reordered this packet in 1.21.2: the teleport ID moved from last to first and the
+    relative-movement flags widened from a byte to a 32-bit field. Read from the dataset rather than
+    assumed, because the proxy writes this packet itself -- to pin an unauthenticated player's client
+    at the origin -- and a wrong field order there is not a missed detection, it is every player on a
+    whole band of versions having their join mangled.
+
+    A shape that is neither of the two known ones returns None, which drops the version rather than
+    guessing. That is the same rule the packet IDs follow.
+    """
+    layout = protocol["play"]["toClient"]["types"].get("packet_position")
+    if not layout or layout[0] != "container":
+        return None
+
+    names = [f["name"] for f in layout[1]]
+    if names[:1] == ["teleportId"]:
+        return "TeleportIdFirst"
+    if names[:3] == ["x", "y", "z"] and names[-1:] == ["teleportId"]:
+        return "TeleportIdLast"
+    return None
+
+
 def build(version_path):
     protocol = fetch(f"{DATA}/{version_path}/protocol.json")
     sb = packet_ids(protocol, "play", "toServer")
@@ -89,6 +113,10 @@ def build(version_path):
     table["title_text"] = pick(cb, ["set_title_text", "title"])
     table["subtitle_text"] = pick(cb, ["set_title_subtitle", "set_subtitle_text"])
     table["title_animation"] = pick(cb, ["set_title_time", "set_titles_animation"])
+    table["player_position"] = pick(cb, ["position"])
+    table["set_health"] = pick(cb, ["update_health"])
+    table["accept_teleportation"] = pick(sb, ["teleport_confirm"])
+    table["position_layout"] = position_layout(protocol)
     table["config_finish"] = pick(config_sb, ["finish_configuration"])
 
     if table["system_chat"] is None:
@@ -99,6 +127,10 @@ def build(version_path):
         return None, "no disconnect"
     if any(table[k] is None for k in ("title_text", "subtitle_text", "title_animation")):
         return None, "no title packets"
+    if any(table[k] is None for k in ("player_position", "set_health", "accept_teleportation")):
+        return None, "no position/health packets"
+    if table["position_layout"] is None:
+        return None, "unrecognised Synchronize Player Position layout"
 
     table["actions"] = sorted({sb[n] for n in ACTION_NAMES if n in sb})
     return table, None
@@ -126,9 +158,13 @@ for proto, expected in mojang.items():
         continue
 
     for key in ("chat", "chat_command", "config_finish", "system_chat", "move_pos", "swing",
-                "title_text", "subtitle_text", "title_animation"):
+                "title_text", "subtitle_text", "title_animation",
+                "player_position", "set_health", "accept_teleportation", "position_layout"):
         if table[key] != expected[key]:
-            mismatches.append(f"{version} {key}: minecraft-data {table[key]:#04x} vs Mojang {expected[key]:#04x}")
+            # position_layout is a string; the rest are packet IDs.
+            shown = (f"{table[key]} vs {expected[key]}" if isinstance(table[key], str)
+                     else f"{table[key]:#04x} vs {expected[key]:#04x}")
+            mismatches.append(f"{version} {key}: minecraft-data {shown} (Mojang second)")
 
     print(f"  {version} (protocol {proto}): {'MISMATCH' if mismatches else 'agrees'}")
 

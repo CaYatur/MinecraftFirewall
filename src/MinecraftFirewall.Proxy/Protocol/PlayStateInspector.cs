@@ -30,8 +30,19 @@ public sealed class PlayStateInspector(
     PolicyEngine policyEngine,
     InspectionOptions inspection,
     ILogger logger,
+    AuthHold? authHold = null,
     Func<DateTimeOffset>? clock = null)
 {
+    /// <summary>
+    /// The state shared with the pump carrying the backend's side of this connection.
+    ///
+    /// Holding a player in place takes both halves: only the pump ever learns where the backend has
+    /// put them, and only this class knows when they have authenticated. Optional so the older
+    /// constructor and the tests built on it still work -- without one, the hold refuses movement
+    /// without correcting the client, which is exactly what it did before.
+    /// </summary>
+    private readonly AuthHold _hold = authHold ?? new AuthHold();
+
     /// <summary>
     /// Where "now" comes from. Overridable because every rate and speed judgement here is a division
     /// by elapsed time, and a test feeding packets from a MemoryStream delivers them all in the same
@@ -73,6 +84,33 @@ public sealed class PlayStateInspector(
     /// a while and none of that time is the player ignoring a prompt they have not seen yet.</summary>
     private DateTimeOffset? _authPromptedAt;
     private DateTimeOffset _lastAuthReminder;
+    private DateTimeOffset _lastPositionLock;
+
+    /// <summary>
+    /// The teleport that puts a player back where the backend has them, while it is still unanswered.
+    ///
+    /// Movement stays swallowed until this is confirmed, which closes a race that would otherwise send
+    /// the backend a position of nowhere. The client cannot know it has been released until the
+    /// restoring teleport reaches it, so any movement packet already on its way was composed while it
+    /// still believed it was standing at the origin. Forwarding one of those is a player apparently
+    /// crossing the world in a single tick — which a server quite reasonably rejects.
+    /// </summary>
+    private int? _pendingRestoreTeleport;
+
+    /// <summary>
+    /// When to stop waiting for that confirmation and let the player move regardless.
+    ///
+    /// Every real client answers a teleport, but "every real client" is a claim about software this
+    /// project does not control and cannot test all of. The failure mode without a deadline is a
+    /// player who authenticated successfully and then cannot move at all, which is worse than the
+    /// single rejected movement packet the wait exists to prevent.
+    /// </summary>
+    private DateTimeOffset _restoreDeadline;
+
+    /// <summary>How long that wait may last. Generous next to a round trip, brief next to a person's
+    /// patience.</summary>
+    private static readonly TimeSpan RestoreConfirmationTimeout = TimeSpan.FromSeconds(5);
+    private volatile bool _damageSeenWhileHeld;
 
     // Session tallies, kept for the anomaly baseline. Deliberately counted here rather than in the
     // analyser: this is the one place every serverbound packet passes through exactly once.
@@ -98,7 +136,7 @@ public sealed class PlayStateInspector(
         InspectionOptions inspection,
         ILogger logger)
         : this(profile, username, remoteAddress, packetIds, graceAuth, startsTrusted, identityOptions,
-               dangerousCommands, messages, policyEngine, inspection, logger, null)
+               dangerousCommands, messages, policyEngine, inspection, logger, null, null)
     {
     }
 
@@ -215,7 +253,7 @@ public sealed class PlayStateInspector(
                     {
                         _authPromptedAt = _now();
                         _lastAuthReminder = _now();
-                        SendToPlayer(graceAuth.NeedsRegistration ? messages.RegistrationPrompt : messages.LoginPrompt);
+                        PromptToAuthenticate();
                     }
                 }
 
@@ -228,10 +266,45 @@ public sealed class PlayStateInspector(
             // while the proxy waits politely for a password. Only packets that would let them *act*
             // are refused — keep-alives and the rest keep flowing, or the backend would disconnect
             // them for timing out and they would never see the prompt.
+            if (_pendingRestoreTeleport is not null && _now() >= _restoreDeadline)
+            {
+                logger.LogDebug("[{Profile}] '{Username}' did not confirm the teleport back to their position; " +
+                                "letting them move anyway.", profile.Name, username);
+                _pendingRestoreTeleport = null;
+            }
+
+            if (_pendingRestoreTeleport is { } restoreId)
+            {
+                if (packet.PacketId == packetIds.PlayAcceptTeleportationServerbound &&
+                    IsProxyTeleportConfirmation(packet))
+                {
+                    if (VarIntOrDefault(packet.Fields) == restoreId)
+                        _pendingRestoreTeleport = null;
+
+                    continue;
+                }
+
+                if (packetIds.IsMovement(packet.PacketId))
+                    continue; // composed before the client knew it had been moved back
+            }
+
             if (graceAuth is not null && !_graceAuthResolved)
             {
-                if (HandleAuthenticationTimeout())
+                if (HandleAuthenticationTimeout() || HandleDamageWhileHeld())
                     return;
+
+                MaintainPositionLock();
+
+                // The client answers every teleport with a confirmation carrying its id. The ones
+                // answering the proxy's own pinning teleports have to be swallowed: the backend never
+                // sent those, and a confirmation for a teleport it knows nothing about desynchronises
+                // it. Its own must still go through untouched -- a backend waiting on an unanswered
+                // teleport refuses to let the player move afterwards.
+                if (packet.PacketId == packetIds.PlayAcceptTeleportationServerbound &&
+                    IsProxyTeleportConfirmation(packet))
+                {
+                    continue;
+                }
 
                 if (packetIds.IsPlayerAction(packet.PacketId))
                 {
@@ -269,7 +342,13 @@ public sealed class PlayStateInspector(
 
             if (graceAuth is not null && !_graceAuthResolved)
             {
-                HandleAuthenticationAttempt(isCommand ? text : null);
+                // Taken whether it arrived as a command or as ordinary chat. Minecraft paints a
+                // command red in the input box when the server has not declared it, and the proxy's
+                // commands are ones the backend has never heard of -- so to a player they looked like
+                // mistakes even while they worked. Accepting the same words without a slash removes
+                // that entirely. Nothing typed here is forwarded either way, so a password sent as
+                // plain chat still never reaches the backend, and still never reaches a log.
+                HandleAuthenticationAttempt(text);
                 if (DisconnectReason is not null)
                     return;
                 continue; // consumed either way — never forwarded to the backend
@@ -309,6 +388,24 @@ public sealed class PlayStateInspector(
     {
         var parsed = commandText is not null ? CayaDevCheckCommandParser.Parse(commandText) : null;
 
+        // Reachable from inside the hold, not only afterwards. Somebody who owns this name on a real
+        // Minecraft account should not have to invent a password for a server that could simply
+        // recognise them -- and until this was answered here, the only way to find it was to already
+        // be past the prompt that was asking for the password.
+        if (parsed is { Kind: CayaDevCheckCommandKind.PremiumLockAsk })
+        {
+            logger.LogInformation("[{Profile}] '{Username}' asked about locking their name to a Minecraft account.",
+                profile.Name, username);
+            SendToPlayer(messages.PremiumLockExplain);
+            return;
+        }
+
+        if (parsed is { Kind: CayaDevCheckCommandKind.PremiumLockConfirm })
+        {
+            ArmPremiumClaim();
+            return;
+        }
+
         if (graceAuth!.NeedsRegistration)
         {
             HandleRegistrationAttempt(parsed);
@@ -322,6 +419,7 @@ public sealed class PlayStateInspector(
             graceAuth.Entry.LearnIp(remoteAddress, identityOptions.LearnedIpTtl, identityOptions.MaxLearnedIpsPerUsername);
             policyEngine.RegisterGraceAuthSuccess(remoteAddress, profile.Name, username);
             _isTrusted = true;
+            ReleaseHold();
             SendToPlayer(messages.AuthenticationAccepted);
             logger.LogInformation("[{Profile}] '{Username}' authenticated from a new IP {Ip} — trusted for {Ttl}.",
                 profile.Name, username, remoteAddress, identityOptions.LearnedIpTtl);
@@ -341,7 +439,7 @@ public sealed class PlayStateInspector(
     {
         if (parsed is not { Kind: CayaDevCheckCommandKind.Register })
         {
-            SendToPlayer(messages.RegistrationPrompt);
+            PromptToAuthenticate();
             return;
         }
 
@@ -356,6 +454,7 @@ public sealed class PlayStateInspector(
 
         _graceAuthResolved = true;
         _isTrusted = true;
+        ReleaseHold();
         SendToPlayer(messages.AuthenticationAccepted);
 
         logger.LogInformation("[{Profile}] '{Username}' registered from {Ip} under server-wide registration.",
@@ -371,7 +470,7 @@ public sealed class PlayStateInspector(
             return;
 
         _lastAuthReminder = now;
-        SendToPlayer(graceAuth!.NeedsRegistration ? messages.RegistrationPrompt : messages.LoginPrompt);
+        PromptToAuthenticate();
     }
 
     /// <summary>Ends a connection that has been frozen too long. Returns true when the caller should
@@ -701,6 +800,164 @@ public sealed class PlayStateInspector(
         DisconnectReason = messages.PremiumLockArmed;
     }
 
+    // —— holding a player at the prompt —————————————————————————————
+
+    /// <summary>
+    /// Puts the instruction where somebody will actually see it: across the middle of the screen as
+    /// well as in chat.
+    ///
+    /// Chat alone was not enough, and that only showed up when somebody who had not built this tried
+    /// it. A player who has never met a login-required server does not read chat, and the message
+    /// scrolls away while they are looking at their inventory. Every line here is configurable, so a
+    /// server can say it in its own language and its own words.
+    /// </summary>
+    private void PromptToAuthenticate()
+    {
+        bool registering = graceAuth!.NeedsRegistration;
+
+        SendToPlayer(registering ? messages.RegistrationPrompt : messages.LoginPrompt);
+
+        // Only while registering. Somebody logging in already has a password; somebody choosing one
+        // is exactly who should be told they may not need to.
+        if (registering && !string.IsNullOrWhiteSpace(messages.PremiumOfferDuringRegistration))
+            SendToPlayer(messages.PremiumOfferDuringRegistration);
+
+        SendTitle(
+            registering ? messages.RegistrationTitle : messages.LoginTitle,
+            registering ? messages.RegistrationSubtitle : messages.LoginSubtitle,
+            // Twenty ticks a second, and set to outlast the gap between reminders by a wide margin so
+            // the prompt never blinks out and leaves somebody staring at nothing.
+            stayTicks: (int)(identityOptions.AuthenticationReminderInterval.TotalSeconds * 20) + 100);
+    }
+
+    private void SendTitle(string title, string subtitle, int stayTicks)
+    {
+        WriteToClient(() => FrameWriter.WriteTitleFrames(
+            packetIds.PlayTitleAnimationClientbound,
+            packetIds.PlayTitleTextClientbound,
+            packetIds.PlaySubtitleTextClientbound,
+            title, subtitle, stayTicks));
+    }
+
+    /// <summary>
+    /// Re-tells the client where it is, often enough that a held player never visibly drifts.
+    ///
+    /// Refusing their movement packets keeps them still as far as the server is concerned, but the
+    /// client does not know that: it predicts its own movement and only corrects when contradicted.
+    /// Without this, a held player walks around their own screen and then snaps back, which reads as a
+    /// broken server rather than as a prompt — and gravity is a prediction too, so pinning them once
+    /// simply starts them falling.
+    ///
+    /// Nothing happens until the backend has said where the player is. Until then there is no position
+    /// to put back afterwards, and moving somebody the proxy cannot restore would be worse than
+    /// leaving them be.
+    /// </summary>
+    private void MaintainPositionLock()
+    {
+        if (!identityOptions.LockPositionWhileAuthenticating || !_hold.HasBackendPosition)
+            return;
+
+        DateTimeOffset now = _now();
+        if (_lastPositionLock != default && now - _lastPositionLock < identityOptions.PositionLockInterval)
+            return;
+
+        _lastPositionLock = now;
+
+        int teleportId = _hold.NextProxyTeleportId();
+        WriteToClient(() => FrameWriter.WritePlayerPositionFrame(
+            packetIds.PlayPlayerPositionClientbound, packetIds.PositionLayout,
+            identityOptions.LockPositionX, identityOptions.LockPositionY, identityOptions.LockPositionZ,
+            yaw: 0f, pitch: 0f, teleportId));
+    }
+
+    /// <summary>The leading VarInt, or -1 if it cannot be read. Only used to match a confirmation
+    /// already known to be the proxy's own, so an unreadable one simply fails to match.</summary>
+    private static int VarIntOrDefault(ReadOnlySpan<byte> fields)
+    {
+        try
+        {
+            return VarInt.Decode(fields, out _);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or ArgumentOutOfRangeException or IndexOutOfRangeException)
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>True when this confirmation answers one of the proxy's own pinning teleports, which
+    /// means the backend never sent it and must never see the answer.</summary>
+    private bool IsProxyTeleportConfirmation(DecodedPacket packet)
+    {
+        try
+        {
+            return _hold.IsProxyTeleport(VarInt.Decode(packet.Fields, out _));
+        }
+        catch (Exception ex) when (ex is InvalidDataException or ArgumentOutOfRangeException or IndexOutOfRangeException)
+        {
+            // Unreadable, so it cannot be shown to be ours. Forwarded, because withholding a teleport
+            // confirmation the backend is waiting on would leave the player unable to move afterwards.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Ends the hold and puts the player back where the backend has them.
+    ///
+    /// The restore matters as much as the pin. Server-side they never moved, so their real position is
+    /// still whatever it was at join; it is only their client that has been standing at the origin.
+    /// Leaving it there would mean the first step they took got corrected out from under them.
+    /// </summary>
+    private void ReleaseHold()
+    {
+        _hold.Released = true;
+
+        // Cleared rather than left to time out: the prompt was given a long stay so it would not blink
+        // out while they read it, and that same length would otherwise hang over the game afterwards.
+        SendTitle("", "", stayTicks: 1);
+
+        if (!identityOptions.LockPositionWhileAuthenticating || _hold.BackendPosition is not { } position)
+            return;
+
+        int teleportId = _hold.NextProxyTeleportId();
+        _pendingRestoreTeleport = teleportId;
+        _restoreDeadline = _now() + RestoreConfirmationTimeout;
+
+        WriteToClient(() => FrameWriter.WritePlayerPositionFrame(
+            packetIds.PlayPlayerPositionClientbound, packetIds.PositionLayout,
+            position.X, position.Y, position.Z, position.Yaw, position.Pitch, teleportId));
+    }
+
+    /// <summary>
+    /// Reports the player's health, as observed on the backend's side of the connection. Called from
+    /// the pump rather than from this loop, hence the volatile field.
+    /// </summary>
+    public void NoteBackendHealth(float health)
+    {
+        if (health <= identityOptions.DamageDisconnectHealthThreshold)
+            _damageSeenWhileHeld = true;
+    }
+
+    /// <summary>
+    /// Pulls a held player out if something has started hurting them. Returns true when the caller
+    /// should stop reading.
+    ///
+    /// A firewall in front of a server cannot stop a creeper: the player really is standing in the
+    /// world while they read the prompt, and their health is decided entirely by the server. Nothing
+    /// this proxy refuses or rewrites changes that. What it can do is notice in time — a kick costs
+    /// them a reconnect, and a death costs them everything they were carrying.
+    /// </summary>
+    private bool HandleDamageWhileHeld()
+    {
+        if (!_damageSeenWhileHeld || !identityOptions.DisconnectIfDamagedWhileAuthenticating)
+            return false;
+
+        logger.LogInformation("[{Profile}] '{Username}' ({Ip}) was taking damage while waiting to authenticate " +
+                              "— disconnected before they could die.", profile.Name, username, remoteAddress);
+
+        DisconnectReason = messages.DamagedWhileAuthenticating;
+        return true;
+    }
+
     /// <summary>
     /// Says something to the player without ending their connection.
     ///
@@ -710,18 +967,32 @@ public sealed class PlayStateInspector(
     /// </summary>
     private void SendToPlayer(string text)
     {
+        WriteToClient(() => FrameWriter.WriteSystemChatFrame(packetIds.PlaySystemChatClientbound, text));
+    }
+
+    /// <summary>
+    /// Sends something the proxy composed itself to the player, best-effort.
+    ///
+    /// Every one of these is an explanation or a correction, never a security decision — a prompt
+    /// that fails to arrive is a worse experience, not a weaker firewall — so nothing here is allowed
+    /// to disturb a connection that is otherwise working. The stream serialises its writes, because
+    /// the pump carrying the backend's replies is writing to the same socket at the same time, and two
+    /// interleaved length-prefixed frames produce one frame whose declared length does not match its
+    /// contents and a disconnect nobody can explain.
+    /// </summary>
+    private void WriteToClient(Func<byte[]> build)
+    {
         Stream? writer = _clientWriter;
         if (writer is null)
             return;
 
         try
         {
-            byte[] frame = FrameWriter.WriteSystemChatFrame(packetIds.PlaySystemChatClientbound, text);
-            writer.WriteAsync(frame).AsTask().GetAwaiter().GetResult();
+            writer.WriteAsync(build()).AsTask().GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "[{Profile}] could not deliver a message to '{Username}'.", profile.Name, username);
+            logger.LogDebug(ex, "[{Profile}] could not deliver a packet to '{Username}'.", profile.Name, username);
         }
     }
 

@@ -64,21 +64,53 @@ public sealed class MessagesOptions
     // Sent into the player's chat while they are held still, so they are longer and more instructional
     // than the kick messages above: somebody reading these is stuck and needs to be told what to do,
     // not merely told what happened.
+    //
+    // They ask for the words without a leading slash. Both forms work and always have, but Minecraft
+    // paints a command red in the input box when the server has not declared it — and these are
+    // commands the backend has never heard of, because the proxy answers them before it ever gets
+    // there. Telling people to type something that renders as an error was its own small bug report.
 
     public string RegistrationPrompt { get; set; } =
-        "This server requires an account. Type  /register <password>  to create one. " +
+        "This server requires an account. Type  register <password>  in chat to create one. " +
         "You cannot move or interact until you do. Choose something you have not used elsewhere.";
 
     public string LoginPrompt { get; set; } =
-        "Welcome back. Type  /login <password>  to continue. You cannot move or interact until you do.";
+        "Welcome back. Type  login <password>  in chat to continue. You cannot move or interact until you do.";
 
     public string AuthenticationAccepted { get; set; } =
         "Authenticated. Have fun.";
 
     /// <summary>Takes the configured minimum length as {0}.</summary>
     public string PasswordTooShort { get; set; } =
-        "That password is too short — it needs at least {0} characters. Try again with  /register <password>";
+        "That password is too short — it needs at least {0} characters. Try again with  register <password>";
 
     public string AuthenticationTimedOut { get; set; } =
         "You did not register or log in within the time allowed. Reconnect and try again.";
+
+    // ---- the on-screen prompt --------------------------------------------------------------------
+    // Chat was not enough, and that only became obvious when somebody who had not built this tried it.
+    // A player who has never met a login-required server does not read chat, and the message scrolls
+    // away while they are looking at their inventory. These go across the middle of the screen, where
+    // they cannot be missed, and are kept short because a title has room for one line and no more.
+
+    public string RegistrationTitle { get; set; } = "Registration required";
+
+    public string RegistrationSubtitle { get; set; } = "Type in chat:  register <password>";
+
+    public string LoginTitle { get; set; } = "Login required";
+
+    public string LoginSubtitle { get; set; } = "Type in chat:  login <password>";
+
+    /// <summary>Offered alongside the registration prompt. Somebody with a real Minecraft account
+    /// should not have to invent a password for a server that could simply recognise them.</summary>
+    public string PremiumOfferDuringRegistration { get; set; } =
+        "Own this name on a real Minecraft account? Type  premium  instead, and it will be locked to that " +
+        "account — no password to remember, and nobody else can ever use the name here.";
+
+    /// <summary>Sent as the kick reason when a held player starts taking damage. See
+    /// IdentityOptions.DisconnectIfDamagedWhileAuthenticating for why a kick is the kindest option
+    /// available to something sitting in front of the server rather than inside it.</summary>
+    public string DamagedWhileAuthenticating { get; set; } =
+        "Something attacked you while you were logging in, so you were disconnected before you could die. " +
+        "Rejoin and log in straight away.";
 }
