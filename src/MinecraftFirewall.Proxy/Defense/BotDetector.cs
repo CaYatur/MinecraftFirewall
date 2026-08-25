@@ -62,12 +62,29 @@ public sealed class BotDetector : IDisposable
     /// Records that this address connected claiming a hostname the profile does not serve.
     ///
     /// The connection itself was already refused where that happened — this is about what the
-    /// refusal leaves behind. A single mismatch is unremarkable (someone shared the raw IP), but an
-    /// address that keeps doing it is enumerating, and only a record that outlives the connection can
-    /// tell the two apart.
+    /// refusal leaves behind. An address that keeps announcing domains this server does not serve is
+    /// enumerating, and only a record that outlives the connection can show that.
+    ///
+    /// Two things this deliberately does not count, both found by reading a real server's log rather
+    /// than by testing.
+    ///
+    /// Connecting by raw IP is not announcing a foreign domain. It is what happens when somebody is
+    /// given the address instead of the name — most often the administrator, testing their own
+    /// server. Counting it meant the owner's every connection carried a bot signal for something they
+    /// had done to themselves.
+    ///
+    /// And the count is now a window rather than a tally. It only ever went up, so once an address had
+    /// been refused a few times, every later connection from it — including every successful,
+    /// entirely legitimate one — scored the full weight forever, with no way back short of a
+    /// service restart.
     /// </summary>
-    public void RecordHostnameMismatch(IPAddress address) =>
-        History(address).HostnameMismatches++;
+    public void RecordHostnameMismatch(IPAddress address, HostnameMismatchKind kind)
+    {
+        if (kind != HostnameMismatchKind.ForeignDomain)
+            return;
+
+        History(address).RecordHostnameMismatch(DateTimeOffset.UtcNow, _options.HostnameMismatchMemory);
+    }
 
     /// <summary>
     /// Records that the anomaly model has repeatedly flagged this address, so it counts towards the
@@ -116,10 +133,12 @@ public sealed class BotDetector : IDisposable
                 $"'{Trim(username)}' has the shape of a generated name"));
         }
 
-        if (history.HostnameMismatches > 0)
+        int mismatches = history.RecentHostnameMismatches(now, _options.HostnameMismatchMemory);
+        if (mismatches > 0)
         {
             signals.Add(new BotSignal("hostname-mismatch", _options.WeightHostnameMismatch,
-                $"{history.HostnameMismatches} earlier connection(s) from this address claimed a hostname this server does not serve"));
+                $"{mismatches} connection(s) from this address in the last {Describe(_options.HostnameMismatchMemory)} " +
+                "announced a domain this server does not serve"));
         }
 
         // Second-hand evidence, so it is only allowed to contribute to a score — never to be the
@@ -197,7 +216,7 @@ public sealed class BotDetector : IDisposable
 
         public DateTimeOffset? LastStatusPing { get; set; }
         public int AbandonedHandshakes { get; set; }
-        public int HostnameMismatches { get; set; }
+        private readonly Queue<DateTimeOffset> _hostnameMismatches = new();
         public int AnomalyWeight { get; set; }
         public DateTimeOffset LastActivity { get; private set; } = DateTimeOffset.UtcNow;
 
@@ -210,6 +229,36 @@ public sealed class BotDetector : IDisposable
                 while (_connections.Count > MaxRememberedConnections)
                     _connections.Dequeue();
             }
+        }
+
+        public void RecordHostnameMismatch(DateTimeOffset now, TimeSpan memory)
+        {
+            lock (_gate)
+            {
+                LastActivity = now;
+                _hostnameMismatches.Enqueue(now);
+                Trim(now, memory);
+            }
+        }
+
+        /// <summary>How many mismatches are still inside the memory window. A window rather than a
+        /// tally so an address can stop being suspicious by stopping.</summary>
+        public int RecentHostnameMismatches(DateTimeOffset now, TimeSpan memory)
+        {
+            lock (_gate)
+            {
+                Trim(now, memory);
+                return _hostnameMismatches.Count;
+            }
+        }
+
+        private void Trim(DateTimeOffset now, TimeSpan memory)
+        {
+            while (_hostnameMismatches.Count > 0 && now - _hostnameMismatches.Peek() > memory)
+                _hostnameMismatches.Dequeue();
+
+            while (_hostnameMismatches.Count > MaxRememberedConnections)
+                _hostnameMismatches.Dequeue();
         }
 
         /// <summary>Adds a username and returns how many distinct ones are still inside the memory

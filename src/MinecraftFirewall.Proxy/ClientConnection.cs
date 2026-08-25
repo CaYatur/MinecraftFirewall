@@ -6,6 +6,7 @@ using MinecraftFirewall.Proxy.Identity;
 using MinecraftFirewall.Proxy.Identity.Premium;
 using MinecraftFirewall.Proxy.Inspection;
 using MinecraftFirewall.Proxy.Messages;
+using MinecraftFirewall.Proxy.Network;
 using MinecraftFirewall.Proxy.Policy;
 using MinecraftFirewall.Proxy.Protocol;
 
@@ -92,7 +93,8 @@ public static class ClientConnection
             // describe how it connected — but repeating the attempt is behaviour, and behaviour is
             // what the bot score is made of. The boundary that actually enforces "only through my
             // domain" is the backend being unreachable, not this; see the README honesty notes.
-            botDetector.RecordHostnameMismatch(remoteAddress);
+            botDetector.RecordHostnameMismatch(remoteAddress,
+                ScannerDetector.Classify(HostnameMatcher.Normalize(handshake.ServerAddress)));
 
             if (handshake.NextState == HandshakeNextState.Login)
             {
@@ -126,7 +128,7 @@ public static class ClientConnection
             return;
         }
 
-        var (backendClient, backendStream) = await TryConnectBackendAsync(profile, logger, hostShutdown).ConfigureAwait(false);
+        var (backendClient, backendStream) = await TryConnectBackendAsync(profile, client, logger, hostShutdown).ConfigureAwait(false);
         if (backendClient is null || backendStream is null)
             return;
 
@@ -290,7 +292,7 @@ public static class ClientConnection
                     clientIo = cipherStream;
             }
 
-            var (backendClient, backendStream) = await TryConnectBackendAsync(profile, logger, hostShutdown).ConfigureAwait(false);
+            var (backendClient, backendStream) = await TryConnectBackendAsync(profile, client, logger, hostShutdown).ConfigureAwait(false);
             if (backendClient is null || backendStream is null)
                 return;
 
@@ -304,7 +306,14 @@ public static class ClientConnection
             // can explain. Both go through the same serializing wrapper.
             clientIo = new SynchronizedWriteStream(clientIo);
 
-            await backendStream.WriteAsync(handshakeFrame.Raw, hostShutdown).ConfigureAwait(false);
+            // Sent as it arrived unless the profile asks for BungeeCord forwarding, in which case the
+            // address field carries the player's real IP as well. Only on a login: a server-list ping
+            // has no player to describe.
+            byte[] outboundHandshake = profile.IpForwarding == IpForwardingMode.BungeeCord
+                ? BungeeCordHandshake.Rewrite(handshake, remoteAddress, username)
+                : handshakeFrame.Raw;
+
+            await backendStream.WriteAsync(outboundHandshake, hostShutdown).ConfigureAwait(false);
             await backendStream.WriteAsync(loginStartFrame.Raw, hostShutdown).ConfigureAwait(false);
 
             if (hasPacketIds)
@@ -509,8 +518,17 @@ public static class ClientConnection
         return request.IsLive(DateTimeOffset.UtcNow);
     }
 
+    /// <summary>
+    /// Opens the backend connection and, when the profile asks for it, states who is on the other end
+    /// of it before anything else is sent.
+    ///
+    /// The header is written here rather than at the call sites so that none of them can forget. The
+    /// server-list ping opens its own backend connection too, and a header missing from that one
+    /// would not break joining — it would break the server appearing in the list at all, which is
+    /// a harder failure to connect back to its cause.
+    /// </summary>
     private static async Task<(TcpClient? Client, NetworkStream? Stream)> TryConnectBackendAsync(
-        ServerProfile profile, ILogger logger, CancellationToken hostShutdown)
+        ServerProfile profile, TcpClient client, ILogger logger, CancellationToken hostShutdown)
     {
         var backendClient = new TcpClient { NoDelay = true };
 
@@ -520,7 +538,18 @@ public static class ClientConnection
         try
         {
             await backendClient.ConnectAsync(profile.BackendHost, profile.BackendPort, connectCts.Token).ConfigureAwait(false);
-            return (backendClient, backendClient.GetStream());
+            NetworkStream backendStream = backendClient.GetStream();
+
+            if (profile.IpForwarding == IpForwardingMode.ProxyProtocol &&
+                client.Client.RemoteEndPoint is IPEndPoint source &&
+                client.Client.LocalEndPoint is IPEndPoint destination)
+            {
+                await backendStream
+                    .WriteAsync(ProxyProtocolHeader.Build(source, destination), connectCts.Token)
+                    .ConfigureAwait(false);
+            }
+
+            return (backendClient, backendStream);
         }
         catch (Exception ex)
         {

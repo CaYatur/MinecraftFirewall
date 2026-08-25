@@ -106,6 +106,15 @@ public sealed class BotDefenseOptions
     /// reputation as well, which is the part that outlives the single connection.</summary>
     public int WeightHostnameMismatch { get; set; } = 40;
 
+    /// <summary>
+    /// How long a refused hostname keeps counting towards the bot score.
+    ///
+    /// It used to count forever, which meant an address refused a few times scored the full weight on
+    /// every later connection for the lifetime of the service — including on connections that were
+    /// entirely legitimate. A window lets an address stop being suspicious by stopping.
+    /// </summary>
+    public TimeSpan HostnameMismatchMemory { get; set; } = TimeSpan.FromHours(1);
+
     /// <summary>Connected, completed the handshake, and left without doing anything — the shape of a
     /// port scan rather than a player.</summary>
     public int WeightScannerBehaviour { get; set; } = 30;

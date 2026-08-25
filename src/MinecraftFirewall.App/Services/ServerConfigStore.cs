@@ -61,6 +61,15 @@ public sealed class ServerProfileEdit
     public string VpnPolicy { get; set; } = "BlockForProtectedUsernamesOnly";
 
     public bool UseDatacenterList { get; set; }
+
+    /// <summary>
+    /// None, ProxyProtocol, or BungeeCord — how the backend is told which address a player is
+    /// really connecting from.
+    ///
+    /// A string for the same reason VpnPolicy is: an unrecognised value round-trips untouched instead
+    /// of being reset to a default the editor happens to have been compiled with.
+    /// </summary>
+    public string IpForwarding { get; set; } = "None";
 }
 
 /// <summary>
@@ -125,6 +134,7 @@ public sealed class ServerConfigStore
                         BackendPort = TryInt(node["BackendPort"], 25566),
                         VpnPolicy = node["VpnPolicy"]?.GetValue<string>() ?? "BlockForProtectedUsernamesOnly",
                         UseDatacenterList = node["UseDatacenterList"]?.GetValue<bool>() ?? false,
+                        IpForwarding = node["IpForwarding"]?.GetValue<string>() ?? "None",
                     };
 
                     if (node["AllowedHostnames"] is JsonArray hostnames)
@@ -184,6 +194,7 @@ public sealed class ServerConfigStore
                     // server, with nothing to indicate it had happened.
                     ["VpnPolicy"] = profile.VpnPolicy,
                     ["UseDatacenterList"] = profile.UseDatacenterList,
+                    ["IpForwarding"] = profile.IpForwarding,
                     ["AllowedHostnames"] = new JsonArray([.. profile.AllowedHostnames.Select(h => (JsonNode)h!)]),
                     ["ProtectedUsernames"] = new JsonArray([.. profile.ProtectedUsernames.Select(ToNode)]),
                 });

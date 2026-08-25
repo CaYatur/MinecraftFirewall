@@ -1,4 +1,5 @@
 using MinecraftFirewall.Proxy.Identity;
+using MinecraftFirewall.Proxy.Network;
 
 namespace MinecraftFirewall.Proxy;
 
@@ -37,6 +38,19 @@ public sealed class ServerProfile
     /// does and does not guarantee. Empty (default) means no restriction, matching vanilla behavior.
     /// </summary>
     public IReadOnlyList<string> AllowedHostnames { get; init; } = [];
+
+    /// <summary>
+    /// How the backend is told which address a player is really connecting from.
+    ///
+    /// Off by default, because it is not this side alone that decides it: the backend has to be
+    /// configured to expect the same thing, and a server told to read a forwarded address will
+    /// believe whatever it is told. Switching this on without binding the backend to loopback would
+    /// let anyone who can reach that port claim any address they like.
+    ///
+    /// Left off, every player on the server appears as 127.0.0.1 — in the log, in a ban, and to
+    /// every plugin that reads an address.
+    /// </summary>
+    public IpForwardingMode IpForwarding { get; init; } = IpForwardingMode.None;
 
     public IdentityStore IdentityStore { get; } = new();
 }

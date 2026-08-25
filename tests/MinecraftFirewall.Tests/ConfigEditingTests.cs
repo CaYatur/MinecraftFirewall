@@ -200,6 +200,36 @@ public class ServerConfigStoreRoundTripTests
     }
 
     [Fact]
+    public void RenamingAServer_DoesNotSilentlyTurnIpForwardingBackOff()
+    {
+        // A save rewrites the whole ServerProfiles array from the editor's own model, so any key the
+        // editor does not know about is deleted and the service falls back to its compiled default.
+        // That has already happened once here, to the VPN settings, and it is worse for this one: the
+        // symptom is not an error, it is every player on the server quietly becoming 127.0.0.1 again.
+        (ServerConfigStore store, string directory) = CopyShippedConfig();
+        try
+        {
+            (List<ServerProfileEdit> profiles, _) = store.Load();
+            profiles[0].IpForwarding = "ProxyProtocol";
+            Assert.True(store.Save(profiles).Success);
+
+            (List<ServerProfileEdit> afterFirstSave, _) = store.Load();
+            Assert.Equal("ProxyProtocol", afterFirstSave[0].IpForwarding);
+
+            // And again, through an edit that has nothing to do with it.
+            afterFirstSave[0].Name = "MyRenamedServer";
+            Assert.True(store.Save(afterFirstSave).Success);
+
+            (List<ServerProfileEdit> afterRename, _) = store.Load();
+            Assert.Equal("ProxyProtocol", afterRename[0].IpForwarding);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void APreviousCopyIsKeptAlongside()
     {
         (ServerConfigStore store, string directory) = CopyShippedConfig();

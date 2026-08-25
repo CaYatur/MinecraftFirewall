@@ -1,4 +1,5 @@
 using MinecraftFirewall.Proxy.Identity;
+using MinecraftFirewall.Proxy.Network;
 
 namespace MinecraftFirewall.Proxy;
 
@@ -14,6 +15,7 @@ public sealed class ServerProfileConfig
     public bool UseDatacenterList { get; set; }
     public List<ProtectedUsernameConfig> ProtectedUsernames { get; set; } = [];
     public List<string> AllowedHostnames { get; set; } = [];
+    public IpForwardingMode IpForwarding { get; set; } = IpForwardingMode.None;
 }
 
 public sealed class ProtectedUsernameConfig
@@ -43,6 +45,7 @@ public static class ServerProfileFactory
                 VpnPolicy = config.VpnPolicy,
                 UseDatacenterList = config.UseDatacenterList,
                 AllowedHostnames = config.AllowedHostnames,
+                IpForwarding = config.IpForwarding,
             };
 
             foreach (var protectedUsername in config.ProtectedUsernames)

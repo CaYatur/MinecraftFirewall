@@ -132,12 +132,45 @@ public class BotDetectorTests
         // "something is enumerating".
         using BotDetector detector = DefenseTestFactory.CreateBotDetector();
 
-        detector.RecordHostnameMismatch(Player);
-        detector.RecordHostnameMismatch(Player);
+        detector.RecordHostnameMismatch(Player, HostnameMismatchKind.ForeignDomain);
+        detector.RecordHostnameMismatch(Player, HostnameMismatchKind.ForeignDomain);
 
         BotAssessment assessment = AssessNormalJoin(detector);
 
         Assert.Contains(assessment.Signals, s => s.Name == "hostname-mismatch");
+    }
+
+    [Fact]
+    public void ConnectingByRawIpIsNotAHostnameMismatchAtAll()
+    {
+        // Found by reading a live server's log, not by testing. Somebody given the address instead of
+        // the name sends that address in the hostname field — and the person that most often describes
+        // is the administrator, testing their own server. Counting it meant the owner's every
+        // connection carried a bot signal for something they had done to themselves.
+        using BotDetector detector = DefenseTestFactory.CreateBotDetector();
+
+        for (int i = 0; i < 5; i++)
+            detector.RecordHostnameMismatch(Player, HostnameMismatchKind.DirectIpConnect);
+
+        BotAssessment assessment = AssessNormalJoin(detector);
+
+        Assert.DoesNotContain(assessment.Signals, s => s.Name == "hostname-mismatch");
+    }
+
+    [Fact]
+    public void AnAddressStopsBeingSuspiciousByStopping()
+    {
+        // The other half of the same bug. The count only ever went up, so once an address had been
+        // refused a few times, every later connection from it scored the full weight forever — with no
+        // way back short of restarting the service.
+        using BotDetector detector = DefenseTestFactory.CreateBotDetector(new BotDefenseOptions { HostnameMismatchMemory = TimeSpan.Zero });
+
+        detector.RecordHostnameMismatch(Player, HostnameMismatchKind.ForeignDomain);
+        detector.RecordHostnameMismatch(Player, HostnameMismatchKind.ForeignDomain);
+
+        BotAssessment assessment = AssessNormalJoin(detector);
+
+        Assert.DoesNotContain(assessment.Signals, s => s.Name == "hostname-mismatch");
     }
 
     [Fact]
