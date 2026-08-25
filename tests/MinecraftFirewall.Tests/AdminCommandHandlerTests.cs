@@ -122,18 +122,39 @@ public class AdminCommandHandlerTests
     }
 
     [Fact]
-    public async Task RequirePremium_ValidArgs_SetsFlagAndWarnsNotPersisted()
+    public async Task RequirePremium_ValidArgs_SetsFlagAndWarnsThatLosingItFailsOpen()
     {
+        // This command's warning is deliberately stronger than the shared not-persisted note. Every
+        // other mutating command lapsing on restart fails closed (someone gets denied); this one
+        // fails OPEN — a name the admin believed was locked to its real owner becomes usable by
+        // anyone again. The warning has to say so, or the admin has no way to know the difference.
         var fixture = CreateFixture();
 
         var response = await fixture.Handler.HandleAsync(new AdminRequest("require-premium", ["TestServer", "Notch"]), CancellationToken.None);
 
         Assert.True(response.Success);
-        Assert.Contains("NOT survive a service restart", response.Message);
+        Assert.Contains("fails OPEN", response.Message, StringComparison.Ordinal);
+        Assert.Contains("appsettings.json", response.Message, StringComparison.Ordinal);
+        // And that a successful verification in the meantime does not quietly make it stick.
+        Assert.Contains("pin", response.Message, StringComparison.OrdinalIgnoreCase);
 
         var entry = fixture.Profile.IdentityStore.Find("Notch");
         Assert.NotNull(entry);
         Assert.True(entry!.PremiumRequired);
+    }
+
+    [Fact]
+    public async Task WhitelistAddMe_UsesTheMilderNote_SinceLosingItOnlyFailsClosed()
+    {
+        // The counterpart to the test above: this one lapsing just denies someone, so it must NOT
+        // carry the fail-open language — otherwise the strong warning stops meaning anything.
+        var fixture = CreateFixture();
+
+        var response = await fixture.Handler.HandleAsync(new AdminRequest("whitelist-add-me", ["TestServer", "Admin", "203.0.113.7"]), CancellationToken.None);
+
+        Assert.True(response.Success);
+        Assert.Contains("NOT survive a service restart", response.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("fails OPEN", response.Message, StringComparison.Ordinal);
     }
 
     [Fact]

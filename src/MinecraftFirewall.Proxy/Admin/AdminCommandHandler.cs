@@ -23,6 +23,22 @@ public sealed class AdminCommandHandler(
         "NOTE: this change is in-memory only and will NOT survive a service restart. " +
         "To make it permanent, add it under that profile's ProtectedUsernames in appsettings.json.";
 
+    /// <summary>
+    /// require-premium needs a blunter warning than <see cref="NotPersistedNote"/> alone, because it
+    /// is the one command whose loss on restart fails OPEN rather than closed. whitelist-add-me
+    /// lapsing just means someone gets denied — annoying, safe. This lapsing means a name the admin
+    /// believed was locked to its real owner is silently open to anyone again. Worse, it looks fine
+    /// in the meantime: if the genuine owner connects before the config edit, their UUID pin IS
+    /// written to the identity store, but the pin is only ever consulted for a name that is currently
+    /// PremiumRequired — so after a restart it sits there doing nothing.
+    /// </summary>
+    private const string PremiumNotPersistedWarning =
+        "WARNING: unlike the other commands, losing this one on restart fails OPEN — the name becomes " +
+        "usable by anyone again, rather than simply being denied. Add \"RequirePremium\": true under that " +
+        "profile's ProtectedUsernames in appsettings.json NOW. Until you do, even a successful " +
+        "verification by the real owner does not make this stick: the UUID pin is recorded, but it is " +
+        "only consulted while the name is marked premium, so a restart leaves the name unprotected.";
+
     public async Task<AdminResponse> HandleAsync(AdminRequest request, CancellationToken ct)
     {
         try
@@ -117,7 +133,7 @@ public sealed class AdminCommandHandler(
 
         return new AdminResponse(true,
             $"'{args[1]}' on profile '{profile.Name}' now requires a verified premium (Microsoft/Mojang) account to join — " +
-            $"any other login attempt for that name will be denied outright, with no password fallback. {NotPersistedNote}");
+            $"any other login attempt for that name will be denied outright, with no password fallback. {PremiumNotPersistedWarning}");
     }
 
     private async Task<AdminResponse> ReloadAsync(CancellationToken ct)

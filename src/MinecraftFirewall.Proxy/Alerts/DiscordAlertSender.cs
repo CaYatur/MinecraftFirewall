@@ -123,7 +123,10 @@ public sealed class DiscordAlertSender : IAlertSender, IDisposable
 
         try
         {
-            _pump.Wait(TimeSpan.FromSeconds(2));
+            // Cancelling above already aborts any in-flight post, so this is just letting the pump
+            // task observe it. Kept well under HttpTimeout on purpose: waiting the full timeout would
+            // add a guaranteed stall to every service stop that happens to catch a post in flight.
+            _pump.Wait(TimeSpan.FromMilliseconds(500));
         }
         catch
         {

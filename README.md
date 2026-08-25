@@ -180,6 +180,14 @@ dotnet run --project src/MinecraftFirewall.Admin -- require-premium TestServer Y
 dotnet run --project src/MinecraftFirewall.Admin -- reload
 ```
 
+**`require-premium` is the one command you must follow up in config immediately.** Every other mutating
+command lapsing on restart fails *closed* — someone gets denied, which is annoying but safe.
+`require-premium` lapsing fails *open*: a name you believed was locked to its real owner becomes usable
+by anyone again. And it looks fine in the meantime — if the genuine owner connects before you edit the
+config, their UUID pin really is recorded, but a pin is only consulted while the name is still marked
+premium, so a restart leaves the name unprotected with an inert pin sitting beside it. Add
+`"RequirePremium": true` to `appsettings.json` in the same sitting.
+
 `whitelist-add-me` and `require-premium` change in-memory state only — the command's own output says so.
 To make either permanent, add it to that server's `ProtectedUsernames` in `appsettings.json` (the latter
 via `"RequirePremium": true`) and restart the service. `reload` only refreshes the VPN/datacenter IP
